@@ -1,0 +1,12 @@
+[Unit]
+Description=Lab reproduksi: peringatan disk 40/50% dan rotasi backup tingkat 1 (cek-disk.py)
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/cek-disk.env
+ExecStart=/usr/bin/python3 /var/opt/script/tools/cek-disk.py
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,38 @@
+# /etc/cron.d/lab-reproduksi - jadwal lab reproduksi (Tabel 3.5 dan Gambar 3.3 skripsi). Dipasang oleh: lab.sh jadwal-pasang
+# M1 (timer tiap jam) dan M3 (timer tiap menit) memakai systemd, bukan cron. Semua pesan Telegram lewat notify-run.sh.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+T=/var/opt/script/tools
+# --- L5 tingkat 1 + M4: backup, lalu SEGERA diverifikasi (penanda lolos dibuat bila tidak ada FAIL)
+10 0 * * *   root  $T/backup-all-db.sh >> /var/log/backup_db.log 2>&1; $T/backup-all-web.sh >> /var/log/backup_web.log 2>&1; $T/notify-run.sh backup-verify $T/backup-verify.sh
+45 7 * * 6   root  $T/notify-run.sh backup-restore $T/backup-verify.sh --restore-test
+# --- L5 tingkat 2 (Telegram + Git): backup_vps.py memverifikasi zip VPS dan memeriksa penanda lolos sebelum mengirim.
+#     Hapus tanda # setelah /etc/cek-disk.env diisi dan BACKUP_VPS_DIR dijadikan repo git.
+#30 2 * * *  root  systemd-run --scope -p MemoryMax=8G -p OOMPolicy=continue /usr/bin/python3 $T/backup_vps.py >> /var/log/backup_vps.log 2>&1
+# --- L5 tingkat 3 (Google Drive): HANYA bila verifikasi hari ini lolos. Perlu: rclone config (remote bernama gdrive)
+#30 5 * * *  root  $T/backup-verify.sh --lolos-hari-ini && rclone copy /var/opt/BACKUP/web gdrive:VPS-Website/WEB/ --quiet
+#0 7 * * *   root  $T/backup-verify.sh --lolos-hari-ini && rclone copy /var/opt/BACKUP/DB  gdrive:VPS-Website/DB/  --quiet
+# Retensi Drive (Tabel 3.7): salinan lebih dari 90 hari dihapus. Retensi server 7 hari diatur oleh backup-all-*.sh.
+#0 0 1 * *   root  rclone delete gdrive:VPS-Website/WEB/ --min-age 90d --quiet
+#0 0 1 */3 * root  rclone delete gdrive:VPS-Website/DB/  --min-age 90d --quiet
+# --- M2: tiap jam, lengkap setiap Sabtu
+5 * * * *    root  $T/notify-run.sh db-integrity      $T/db-integrity-cek.sh
+30 3 * * 6   root  $T/notify-run.sh db-integrity-full $T/db-integrity-cek.sh --full
+# --- M1 pelengkap: webscan WordPress mingguan
+0 4 * * 0    root  $T/notify-run.sh webscan-wp nice -n 19 ionice -c3 $T/webscan-wp.sh -d 8
+# --- lingkungan: ringkasan kesehatan server (memanggil hasil modul, tidak mengulang pemeriksaannya)
+0 6 * * *    root  $T/notify-run.sh cek-semua $T/cek-all.sh -q
+# --- L2: notifikasi pendaftar OJS baru
+*/5 * * * *  root  /usr/bin/python3 $T/notif-ojs.py >> /var/log/notif-ojs.log 2>&1
+# --- data penelitian: arsip log Nginx yang sudah dirotasi (baseline dan evaluasi tidak ikut terhapus logrotate)
+40 0 * * *   root  $T/arsip-log.sh > /dev/null 2>&1
+# --- data penelitian: panen log harian uji-skripsi.py (hitungan per hari + arsip segmen ber-SHA-256; situs salinan uji-* tidak ikut)
+5 7 * * *    root  /usr/bin/python3 $T/uji-skripsi.py --panen >> /var/log/uji-skripsi-panen.log 2>&1
+# --- IP admin: IP kantor tetap + IP dinamis lewat DDNS. Atur dengan: lab.sh ip-admin
+#*/10 * * * * root  $T/ip-kantor-sync.sh > /dev/null 2>&1   (dipasang otomatis oleh lab.sh ip-admin di /etc/cron.d/lab-ip-admin; jangan diaktifkan dua kali)
+# --- M5: laporan perilaku IP harian (masukan cf-guard)
+20 5 * * *   root  $T/ip-report.sh 30 > /dev/null 2>&1
+# --- M5 cf-guard: hapus tanda # setelah atur-token.sh cloudflare selesai dan hasil dry-run diperiksa.
+#     Kasus ambigu diajukan ke gerbang persetujuan SOC-IR (lab.sh soc-ir); bot SOC (poll) hanya menjawab perintah.
+#40 */6 * * * root  /usr/bin/python3 $T/cf-guard.py run --apply >> /var/log/cf-guard.cron.log 2>&1
+#* * * * *   root  /usr/bin/python3 $T/cf-guard.py poll >> /var/log/cf-guard.cron.log 2>&1

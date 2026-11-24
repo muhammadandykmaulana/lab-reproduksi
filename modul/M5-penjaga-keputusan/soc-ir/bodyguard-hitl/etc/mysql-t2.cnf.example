@@ -1,0 +1,5 @@
+# /etc/bodyguard/mysql-t2.cnf - root:guard-approve 0640 (TIDAK terbaca pemindai guard). User DB dengan UPDATE per-kolom untuk aksi T2 (lihat sql/grants.sql).
+[client]
+user = bodyguard_t2
+password = GANTI-DENGAN-PASSWORD-ACAK-LAIN
+host = localhost

@@ -1,0 +1,70 @@
+# ==== Lab reproduksi: berkas yang TIDAK BOLEH masuk repositori ====
+# Jalankan `bash cek-rahasia.sh` sebelum setiap `git push`.
+
+# --- rahasia (token, kata sandi, kunci) ---
+*.env
+.env
+.env.*
+!*.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*.cnf
+!*.cnf.example
+rclone.conf
+.my.cnf
+.netrc
+credentials*.json
+service-account*.json
+token*.json
+
+# --- data dan daftar khusus server (salin dari *.example lalu isi di server, jangan di repo) ---
+known_admins.txt
+trusted_ips.txt
+admin-subnets.txt
+ioc_rules.json
+bodyguard.conf
+root.conf
+
+# --- data produksi: backup, dump, log, bukti ---
+*.sql
+*.sql.gz
+*.dump
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.log
+*.log.gz
+bukti/
+BACKUP/
+arsip-log/
+hardening-db/
+audit-run/
+*.sqlite
+*.sqlite3
+*.db
+uji/hasil/
+
+# --- cadangan pemasang dan berkas sementara ---
+*.bak
+*.bak-*
+*.orig
+*.rej
+*.tmp
+*~
+*.swp
+
+# --- Python dan editor ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

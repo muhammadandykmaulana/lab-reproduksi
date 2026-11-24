@@ -1,0 +1,12 @@
+[Unit]
+Description=Jadwal Bodyguard HITL (tiap 10 menit)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+RandomizedDelaySec=60
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

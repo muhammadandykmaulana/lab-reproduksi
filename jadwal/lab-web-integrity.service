@@ -1,0 +1,9 @@
+[Unit]
+Description=Lab reproduksi: M1 deteksi berkas (web-integrity-cek.sh lewat notify-run.sh)
+
+[Service]
+Type=oneshot
+ExecStart=/var/opt/script/tools/notify-run.sh web-integrity /var/opt/script/tools/web-integrity-cek.sh
+SuccessExitStatus=0 1
+Nice=10
+IOSchedulingClass=idle

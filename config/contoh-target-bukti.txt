@@ -1,0 +1,20 @@
+# Contoh daftar target bukti (relatif ke webroot) dari insiden di STAI-ALI Surabaya.
+# Salin ke /etc/lab-reproduksi/target-bukti.txt lalu ganti dengan temuan di server Anda.
+kampus.ac.id/wp-content/plugins/security-headers-manager-289fd9
+lpm.kampus.ac.id/wp-content/plugins/security-headers-manager-289fd9
+publishing.kampus.ac.id/new.php
+jurnal.kampus.ac.id/local.php
+publishing.kampus.ac.id/wp-content/languages/log.php
+publishing.kampus.ac.id/autoloads.php
+kampus.ac.id/wp-content/sz.php
+lpm.kampus.ac.id/wp-content/sz.php
+publishing.kampus.ac.id/wp-content/themes/saudagarwp-master/assets/swiper/v8/swiper-bundle.min.js.map.php
+jurnal.kampus.ac.id/files/contexts/1/library
+baak.kampus.ac.id/wp-upgrade.php
+baak.kampus.ac.id/tools.php
+jurnal.kampus.ac.id/logs.php
+jurnal.kampus.ac.id/setup.php
+jurnal.kampus.ac.id/tools/feed-rss.php
+jurnal.kampus.ac.id/public/site/images/asbarin/shell.php.gif
+daurah.kampus.ac.id/footer.php.save
+dauroh.kampus.ac.id/update_history.php.save

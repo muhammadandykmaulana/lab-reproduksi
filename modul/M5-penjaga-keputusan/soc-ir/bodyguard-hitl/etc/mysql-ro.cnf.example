@@ -1,0 +1,5 @@
+# /etc/bodyguard/mysql-ro.cnf - root:guard 0640. User DB HANYA SELECT (lihat sql/grants.sql).
+[client]
+user = bodyguard_ro
+password = GANTI-DENGAN-PASSWORD-ACAK
+host = localhost

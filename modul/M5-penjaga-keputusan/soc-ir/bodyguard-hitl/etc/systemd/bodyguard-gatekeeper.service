@@ -1,0 +1,31 @@
+[Unit]
+Description=Bodyguard HITL - Telegram Approval Gatekeeper (T2)
+Documentation=file:///opt/bodyguard/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=guard-approve
+# Grup utama guard: berbagi state.db/log dengan pemindai. Grup guard-approve: membaca mysql-t2.cnf.
+Group=guard
+SupplementaryGroups=guard-approve
+# Rahasia bot APPROVAL + kunci HMAC + allowlist (root:root 0600). Wajib ada.
+EnvironmentFile=/etc/bodyguard/gatekeeper.env
+ExecStartPre=/opt/bodyguard/bin/gatekeeper_bot.py --check
+ExecStart=/opt/bodyguard/bin/gatekeeper_bot.py
+Restart=on-failure
+RestartSec=15
+UMask=0007
+# Lihat catatan di bodyguard-scan.service: sudo dibutuhkan untuk eksekusi T2 yang disetujui.
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

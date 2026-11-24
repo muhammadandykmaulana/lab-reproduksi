@@ -1,0 +1,349 @@
+#!/usr/bin/python3 -I
+# -*- coding: utf-8 -*-
+"""bodyguard - CLI Bodyguard HITL (jalankan sebagai user `guard`, BUKAN root).
+
+  run [--dry-run] [--only ioc,accesslog,accounts,integrity]   satu siklus T0 -> T1 -> T2 -> T3
+  scan [--only ...]            pemeriksaan T0 sekali jalan; tidak mengubah status apa pun
+  status [--json]              mode, freeze, breaker, permintaan T2, aksi terakhir
+  freeze   --reason TEKS       kill-switch (sama dengan /freeze di Telegram)
+  unfreeze --reason TEKS       HANYA dari konsol
+  reset-breaker --reason TEKS [--dryrun]   pulihkan breaker yang trip (latched)
+  accounts accept [--site NAMA ...]        jadikan akun istimewa saat ini sebagai baseline
+  propose test                 kirim permintaan T2 uji (NOOP) untuk menguji alur Telegram end-to-end
+  checklist INC-ID             cetak ulang checklist T3
+  brief INC-ID                 tulis brief tersanitasi untuk LLM penasihat (read-only)
+  selftest                     diagnostik read-only (config, izin, whitelist, sudo, mysql, log)
+
+Kode keluar: 0 ok, 1 gagal, 2 argumen salah, 3 menolak (mis. dijalankan sebagai root).
+"""
+
+import argparse
+import configparser
+import json
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "lib"))
+
+from bodyguard import __version__  # noqa: E402
+from bodyguard import breaker as B  # noqa: E402
+from bodyguard.checklist import write_checklist  # noqa: E402
+from bodyguard.config import load_config  # noqa: E402
+from bodyguard.detectors.accounts import accept_accounts  # noqa: E402
+from bodyguard.detectors.rules import load_rules  # noqa: E402
+from bodyguard.engine import Engine, effective_mode  # noqa: E402
+from bodyguard.llm_brief import write_brief  # noqa: E402
+from bodyguard.model import Finding, Proposal  # noqa: E402
+from bodyguard.mysqlcli import MySQLCLI  # noqa: E402
+from bodyguard.notifier import Notifier  # noqa: E402
+from bodyguard.rootcall import call_bg_root  # noqa: E402
+from bodyguard.sanitizer import clean  # noqa: E402
+from bodyguard.store import Store  # noqa: E402
+from bodyguard.util import INCIDENT_RE, BodyguardError, SingleInstanceLock, fmt_local, new_incident_id, run_argv, setup_logging  # noqa: E402
+from bodyguard.whitelist import Whitelist  # noqa: E402
+
+DETECTORS = ("ioc", "accesslog", "accounts", "integrity")
+
+
+def _store(cfg):
+    if not os.path.isdir(cfg.state_dir):
+        os.makedirs(cfg.state_dir, 0o700)
+    return Store(os.path.join(cfg.state_dir, "state.db"))
+
+
+def _only(raw):
+    if not raw:
+        return None
+    items = [x.strip() for x in raw.split(",") if x.strip()]
+    bad = [x for x in items if x not in DETECTORS]
+    if bad:
+        raise SystemExit("detektor tidak dikenal: %s (pilihan: %s)" % (", ".join(bad), ", ".join(DETECTORS)))
+    return items
+
+
+def _reason(args):
+    r = (args.reason or "").strip()
+    if len(r) < 5:
+        raise SystemExit("--reason wajib diisi (min. 5 karakter) - tercatat di audit")
+    return clean(r, 300)
+
+
+def _actor():
+    return "konsol:%s" % clean(os.environ.get("SUDO_USER") or os.environ.get("USER") or str(os.getuid()), 40)
+
+
+def cmd_run(cfg, args):
+    mode = effective_mode(cfg.mode, args.dry_run)
+    lock = SingleInstanceLock(os.path.join(cfg.state_dir, "run.lock"))
+    if not lock.acquire():
+        print("siklus sebelumnya masih berjalan - dilewati")
+        return 0
+    try:
+        store = _store(cfg)
+        rules = load_rules(cfg.rules_file)
+        eng = Engine(cfg, store, Notifier.from_config(cfg, store), mode, rules,
+                     mysql_ro=MySQLCLI(cfg.mysql_bin, cfg.mysql_ro_cnf))
+        summary = eng.run_cycle(_only(args.only))
+        print(json.dumps(summary, indent=1, ensure_ascii=True, default=str))
+        return 0
+    finally:
+        lock.release()
+
+
+def cmd_scan(cfg, args):
+    store = Store(":memory:")
+    rules = load_rules(cfg.rules_file)
+    eng = Engine(cfg, store, Notifier("log", store), "observe", rules, mysql_ro=MySQLCLI(cfg.mysql_bin, cfg.mysql_ro_cnf))
+    findings = eng.detect(_only(args.only))
+    for f in findings:
+        print(json.dumps(f.to_dict(), ensure_ascii=True, default=str))
+    print("# %d temuan (scan tidak mengubah status, tidak mengirim alert, tidak bertindak)" % len(findings),
+          file=sys.stderr)
+    return 0
+
+
+def cmd_status(cfg, args):
+    store = _store(cfg)
+    live = B.CircuitBreaker(store, cfg.limits, "live").status()
+    dry = B.CircuitBreaker(store, cfg.limits, "dryrun").status()
+    rows = store.conn.execute("SELECT status, COUNT(*) FROM approvals GROUP BY status").fetchall()
+    recent = store.conn.execute("SELECT created_at, tier, kind, target, status, ns, rollback FROM actions "
+                                "ORDER BY id DESC LIMIT 10").fetchall()
+    active_blocks = store.conn.execute("SELECT target, expires_at FROM actions WHERE kind='BLOCK_IP' AND "
+                                       "status='BLOCKED' AND expires_at > ?", (time.time(),)).fetchall()
+    data = {
+        "version": __version__, "config_mode": cfg.mode, "frozen": live.get("frozen"),
+        "breaker_live": live, "breaker_dryrun": dry, "last_run": store.get("engine:last_run"),
+        "approvals": dict((r[0], r[1]) for r in rows),
+        "active_ip_blocks": [{"ip": json.loads(r[0]), "until": fmt_local(r[1], cfg.tz_offset, cfg.tz_label)}
+                             for r in active_blocks],
+        "recent_actions": [{"at": fmt_local(r[0], cfg.tz_offset, cfg.tz_label), "tier": r[1], "kind": r[2],
+                            "target": clean(json.loads(r[3]), 160), "status": r[4], "ns": r[5],
+                            "rollback": clean(r[6], 300) if r[6] else None} for r in recent],
+    }
+    if args.json:
+        print(json.dumps(data, indent=1, ensure_ascii=True, default=str))
+        return 0
+    print("Bodyguard HITL %s | mode config: %s" % (__version__, cfg.mode))
+    print("FREEZE      : %s" % ("YA - %s" % clean(live["frozen"].get("reason"), 120) if live.get("frozen") else "tidak"))
+    for name, st in (("breaker live", live), ("breaker dryrun", dry)):
+        trip = st.get("tripped")
+        print("%-12s: %s | 60 menit: ip_block %s/%s, chmod %s/%s" % (
+            name, ("TRIP - " + clean(trip.get("reason"), 100)) if trip else "normal",
+            st["counts_last_hour"]["ip_block"], st["limits"]["ip_block"],
+            st["counts_last_hour"]["chmod"], st["limits"]["chmod"]))
+    lr = data["last_run"] or {}
+    print("siklus akhir: %s (%s temuan)" % (fmt_local(lr["at"], cfg.tz_offset, cfg.tz_label) if lr.get("at") else "-",
+                                            lr.get("findings", "-")))
+    print("permintaan T2: %s" % (", ".join("%s=%d" % kv for kv in sorted(data["approvals"].items())) or "-"))
+    print("blokir IP aktif: %d" % len(data["active_ip_blocks"]))
+    print("aksi terakhir:")
+    for a in data["recent_actions"]:
+        print("  %s %s %-12s %-18s %s" % (a["at"], a["tier"], a["kind"], a["status"] + "/" + a["ns"], a["target"]))
+        if a["rollback"]:
+            print("      rollback: %s" % a["rollback"])
+    return 0
+
+
+def cmd_freeze(cfg, args):
+    store = _store(cfg)
+    fresh = B.freeze(store, _actor(), _reason(args))
+    print("FREEZE aktif%s. T0 (amati & alert) tetap berjalan." % ("" if fresh else " (sudah aktif sebelumnya)"))
+    return 0
+
+
+def cmd_unfreeze(cfg, args):
+    store = _store(cfg)
+    prev = B.unfreeze(store, _actor(), _reason(args))
+    print("unfreeze: %s" % ("dicabut" if prev else "memang tidak sedang freeze"))
+    return 0
+
+
+def cmd_reset_breaker(cfg, args):
+    store = _store(cfg)
+    prev = B.CircuitBreaker(store, cfg.limits, "dryrun" if args.dryrun else "live").reset(_actor(), _reason(args))
+    print("breaker %s: %s" % ("dryrun" if args.dryrun else "live", "di-reset" if prev else "memang tidak trip"))
+    return 0
+
+
+def cmd_accounts(cfg, args):
+    if args.action != "accept":
+        raise SystemExit("aksi tidak dikenal")
+    store = _store(cfg)
+    names = args.site or [s.name for s in cfg.sites]
+    done = accept_accounts(store, names, _actor())
+    print("baseline akun diterima untuk: %s" % (", ".join(done) or "(tidak ada snapshot - jalankan run dulu)"))
+    return 0
+
+
+def cmd_propose(cfg, args):
+    if args.what == "cf":
+        return _propose_cf(cfg, args)
+    if args.what != "test":
+        raise SystemExit("hanya 'propose test' dan 'propose cf' yang tersedia")
+    if cfg.mode != "enforce":
+        print("catatan: mode %s - permintaan uji tetap dikirim, aksi NOOP selalu boleh" % cfg.mode)
+    store = _store(cfg)
+    eng = Engine(cfg, store, Notifier("log", store), "enforce", load_rules(cfg.rules_file))
+    inc = new_incident_id()
+    f = Finding("APPROVAL_TEST", "low", "uji-alur", detail={"note": "uji tombol, HMAC, dan eksekutor"})
+    p = Proposal("T2", "NOOP_TEST", "uji-alur-%s" % inc, {"nonce": inc}, f)
+    print(json.dumps(eng.queue_t2(inc, p), ensure_ascii=True))
+    return 0
+
+
+def _propose_cf(cfg, args):
+    """Usulan T2 dari cf-guard (dipanggil root lewat runuser -u guard). Satu gerbang untuk semua persetujuan."""
+    import re as _re
+    if not (args.id and _re.match(r"\A[0-9a-f]{12}\Z", args.id)) or args.jenis not in ("ip", "path", "unip"):
+        raise SystemExit("propose cf butuh --id (12 hex) dan --jenis ip|path|unip")
+    nilai = clean(args.nilai or "", 120)
+    if not _re.match(r"\A[0-9A-Za-z:./_~-]{1,120}\Z", nilai):
+        raise SystemExit("--nilai tidak valid")
+    store = _store(cfg)
+    eng = Engine(cfg, store, Notifier("log", store), effective_mode(cfg.mode), load_rules(cfg.rules_file))
+    inc = new_incident_id()
+    f = Finding("CF_GUARD_USULAN", "medium", nilai, detail={"note": clean(args.info or "", 200)}, source="cf-guard")
+    p = Proposal("T2", "CF_APPROVE", "%s %s" % (args.jenis, nilai), {"pending_id": args.id, "jenis": args.jenis,
+                                                                      "nilai": nilai}, f)
+    print(json.dumps(eng.queue_t2(inc, p), ensure_ascii=True))
+    return 0
+
+
+def cmd_checklist(cfg, args):
+    if not INCIDENT_RE.match(args.incident):
+        raise SystemExit("ID insiden tidak valid")
+    store = _store(cfg)
+    rows = store.conn.execute("SELECT kind, severity, target, site, rules FROM findings WHERE incident_id=?",
+                              (args.incident,)).fetchall()
+    findings = [Finding(r[0], r[1], r[2], site=r[3], rules=json.loads(r[4] or "[]")) for r in rows]
+    print(write_checklist(cfg, args.incident, findings))
+    return 0
+
+
+def cmd_brief(cfg, args):
+    if not INCIDENT_RE.match(args.incident):
+        raise SystemExit("ID insiden tidak valid")
+    path, n = write_brief(cfg, _store(cfg), args.incident, time.time())
+    print("%s (%d temuan)" % (path, n))
+    return 0
+
+
+def cmd_selftest(cfg, args):
+    results = []
+
+    def check(name, fn):
+        try:
+            detail = fn()
+            results.append(("OK", name, detail))
+        except Exception as e:
+            results.append(("FAIL", name, clean("%s: %s" % (e.__class__.__name__, e), 300)))
+
+    def st_dir():
+        st = os.stat(cfg.state_dir)
+        if st.st_mode & 0o007:
+            raise ValueError("state_dir tidak boleh terbuka untuk 'other' (sekarang %04o, seharusnya 2770)" % (st.st_mode & 0o7777))
+        if not os.access(cfg.state_dir, os.W_OK):
+            raise ValueError("state_dir tidak bisa ditulis")
+        return cfg.state_dir
+
+    check("state_dir", st_dir)
+    check("whitelist", lambda: Whitelist.from_files([("cloudflare", cfg.cloudflare_file),
+                                                     ("admin", cfg.admin_subnets_file)], cfg.whitelist_extra).summary())
+    check("ioc_rules", lambda: "%d aturan konten" % len(load_rules(cfg.rules_file).content))
+    check("data_dirs", lambda: {"ditemukan": cfg.data_dirs, "tidak_ada": cfg.data_dirs_missing})
+    root_report = {}
+
+    def sudo_root():
+        ok, res = call_bg_root(cfg, run_argv, ["selftest"], timeout=60)
+        if not ok:
+            raise ValueError(res.get("detail") or res.get("error") or res.get("stderr"))
+        root_report.update(res)
+        return res
+
+    check("sudo bg-root selftest", sudo_root)
+
+    def roots_match():
+        if not root_report:
+            raise ValueError("tidak bisa dibandingkan: bg-root selftest gagal")
+        root_side = set(root_report.get("data_roots", []))
+        guard_side = set(cfg.data_dirs)
+        if root_side != guard_side:
+            raise ValueError("BEDA (aksi T1 akan ditolak root): hanya di bodyguard.conf=%s; hanya di root.conf=%s" % (
+                sorted(guard_side - root_side), sorted(root_side - guard_side)))
+        return "sama (%d folder)" % len(guard_side)
+
+    check("data_dirs == data_roots yang diterima bg-root", roots_match)
+    def readable(path):
+        if not os.access(path, os.R_OK):
+            raise PermissionError("tidak bisa dibaca user guard (tambahkan guard ke grup adm?)")
+        return "terbaca"
+
+    for path in cfg.access_logs:
+        check("log akses %s" % path, lambda p=path: readable(p))
+    mysql = MySQLCLI(cfg.mysql_bin, cfg.mysql_ro_cnf)
+    for s in cfg.sites:
+        if s.db:
+            check("mysql read-only %s" % s.name, lambda s=s: mysql.query(s.db, "SELECT 1") and "ok")
+    check("env alert (systemd)", lambda: "BG_ALERT_BOT_TOKEN %s" % ("ada" if os.environ.get("BG_ALERT_BOT_TOKEN")
+                                                                    else "tidak ada di proses ini (normal bila bukan dari systemd)"))
+    width = max(len(r[1]) for r in results)
+    for status, name, detail in results:
+        print("[%-4s] %-*s %s" % (status, width, name, detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=True)))
+    return 1 if any(r[0] == "FAIL" for r in results) else 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="bodyguard", description="Bodyguard HITL (STAI Ali)")
+    ap.add_argument("--config", default="/etc/bodyguard/bodyguard.conf")
+    sub = ap.add_subparsers(dest="cmd")
+    p = sub.add_parser("run")
+    p.add_argument("--dry-run", action="store_true", help="paksa simulasi (hanya bisa membuat lebih aman)")
+    p.add_argument("--only")
+    p = sub.add_parser("scan")
+    p.add_argument("--only")
+    p = sub.add_parser("status")
+    p.add_argument("--json", action="store_true")
+    for name in ("freeze", "unfreeze"):
+        sub.add_parser(name).add_argument("--reason", required=True)
+    p = sub.add_parser("reset-breaker")
+    p.add_argument("--reason", required=True)
+    p.add_argument("--dryrun", action="store_true", help="reset breaker namespace simulasi")
+    p = sub.add_parser("accounts")
+    p.add_argument("action", choices=["accept"])
+    p.add_argument("--site", action="append")
+    p = sub.add_parser("propose")
+    p.add_argument("what", choices=["test", "cf"])
+    p.add_argument("--id")
+    p.add_argument("--jenis")
+    p.add_argument("--nilai")
+    p.add_argument("--info", default="")
+    sub.add_parser("checklist").add_argument("incident")
+    sub.add_parser("brief").add_argument("incident")
+    sub.add_parser("selftest")
+    args = ap.parse_args(argv)
+    os.umask(0o007)  # state/log dibagi grup guard (pemindai + gatekeeper), tertutup untuk lainnya
+    if not args.cmd:
+        ap.print_help()
+        return 2
+    if os.geteuid() == 0:
+        sys.stderr.write("Jangan jalankan sebagai root (file status akan jadi milik root dan merusak layanan).\n"
+                         "Gunakan: sudo -u guard %s %s ...\n" % (sys.argv[0], args.cmd))
+        return 3
+    try:
+        cfg = load_config(args.config)
+    except (OSError, BodyguardError, configparser.Error) as e:
+        sys.stderr.write("config tidak bisa dimuat (%s): %s\n" % (e.__class__.__name__, clean(str(e), 300)))
+        return 1
+    setup_logging(cfg.log_file, stderr=args.cmd in ("run",))
+    handlers = {
+        "run": cmd_run, "scan": cmd_scan, "status": cmd_status, "freeze": cmd_freeze, "unfreeze": cmd_unfreeze,
+        "reset-breaker": cmd_reset_breaker, "accounts": cmd_accounts, "propose": cmd_propose,
+        "checklist": cmd_checklist, "brief": cmd_brief, "selftest": cmd_selftest,
+    }
+    return handlers[args.cmd](cfg, args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

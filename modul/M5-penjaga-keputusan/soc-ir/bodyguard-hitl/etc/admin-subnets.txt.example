@@ -1,0 +1,7 @@
+# /etc/bodyguard/admin-subnets.txt - IP/subnet kantor & admin STAI Ali yang TIDAK BOLEH diblokir.
+# Satu CIDR per baris. Milik root, mode 0644. Baris tidak valid = SEMUA blokir IP dimatikan (fail-closed).
+# IP privat (10/8, 172.16/12, 192.168/16, 100.64/10) dan loopback otomatis tidak pernah diblokir.
+#
+# GANTI contoh di bawah dengan IP publik kantor / VPN admin:
+# 203.0.113.10/32
+# 198.51.100.0/24

@@ -1,0 +1,63 @@
+# /etc/bodyguard/root.conf - dibaca HANYA oleh /usr/local/sbin/bg-root (berjalan sebagai root via sudo).
+# WAJIB: milik root, mode 0644 (tidak writable group/other). Semua path root HARUS path asli (bukan symlink);
+# root yang mengandung symlink dilewati otomatis. Glob (*) diizinkan dan diekspansi setiap pemanggilan.
+#
+# PENTING: daftar ini sebaiknya sama dengan [ioc] data_dirs di bodyguard.conf.
+# `bodyguard selftest` akan memperingatkan bila keduanya berbeda.
+
+[contain]
+# Folder DATA yang boleh dikenai chmod 000 / karantina. Folder kode (tema, plugin, core) JANGAN dimasukkan.
+# SESUAIKAN dengan server. Hati-hati dengan folder "public": web root aplikasi Laravel juga bernama public/.
+data_roots =
+    /var/www/html/*/wp-content/uploads
+    /var/www/html/SESUAIKAN-ojs/public
+    /var/www/html/SESUAIKAN-situs/fonts
+    /var/www/html/SESUAIKAN-situs/ijazah
+# Satu folder bukti untuk semua modul (sama dengan BUKTI_DIR collect3/persistence-killer). Milik root, 0700.
+evidence_dir = /var/opt/bukti
+# Fungsi bersama penyimpan bukti (salinan 0400 bernama SHA256 + metadata + MANIFEST.tsv). Wajib; milik root.
+bukti_bin = /var/opt/script/tools/bukti.py
+# Webshell umumnya kecil. Batas kecil mencegah disk penuh oleh "bukti" raksasa (DB biasanya di /var juga).
+max_file_bytes = 2097152
+# Bila ruang kosong evidence_dir di bawah ini, aksi dibatalkan (gagal aman) - letakkan bukti di FS terpisah bila bisa.
+min_free_bytes = 2147483648
+# Rate cap sisi root (sedikit di atas batas breaker sisi guard = 5/jam, sebagai jaring kedua).
+hourly_cap = 8
+# collect3_evidence.sh (opsional). Dipanggil sebagai root SETELAH file dikunci, HANYA bila path hanya berisi
+# [A-Za-z0-9._/@+=,-] dan entri path masih menunjuk inode yang sama.
+# Kosongkan untuk menonaktifkan. Salinan bukti milik bg-root sendiri tetap selalu diambil.
+collect3 = /var/opt/script/tools/collect3_evidence.sh
+collect3_args = --kasus {incident} {path}
+collect3_timeout = 120
+
+[quarantine]
+hourly_cap = 20
+
+[blokir]
+# Blokir IP T1 lewat SATU jalur: cf-guard.py block (daftar IP Cloudflare). ipset tidak dipakai karena pengunjung
+# situs di belakang Cloudflare tiba dari IP Cloudflare, sehingga blokir di server tidak mengenai penyerang.
+# TTL blokir T1: 1-24 jam.
+min_ttl = 3600
+max_ttl = 86400
+# Daftar IP Cloudflare WAJIB ada & tidak kosong; bila tidak, semua blokir ditolak (fail-closed).
+cloudflare_file = /etc/bodyguard/cloudflare-ips.txt
+whitelist_files = /etc/bodyguard/admin-subnets.txt
+hourly_cap = 25
+
+[plugins]
+plugin_roots = /var/www/html/*/wp-content/plugins
+hourly_cap = 10
+
+[cfguard]
+# cf-guard.py dipanggil dengan sub-perintah tetap: "block" (T1) dan "approve <id>" (T2 setelah tombol sah).
+bin = /var/opt/script/tools/cf-guard.py
+hourly_cap = 20
+
+[integrity]
+# Perintah TETAP untuk menerima baseline baru M1 (user guard tidak bisa memberi argumen).
+# Kosong = aksi T2 "accept baseline" nonaktif.
+accept_cmd = /var/opt/script/tools/web-integrity-cek.sh --accept --yes
+# Maks 840 detik: eksekusi T2 berjalan di loop gatekeeper (selama itu /freeze Telegram tertunda;
+# freeze dari konsol tetap seketika).
+timeout = 840
+hourly_cap = 2

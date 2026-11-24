@@ -1,0 +1,5 @@
+# known_admins.txt - daftar admin yang SAH, satu per baris: namadatabase:login
+# Admin yang tidak ada di daftar ini dilaporkan FAIL oleh db-integrity-cek.sh dan web-integrity-cek.sh.
+# contoh:
+# wp_utama:admin_kampus
+# ojs:editor_jurnal

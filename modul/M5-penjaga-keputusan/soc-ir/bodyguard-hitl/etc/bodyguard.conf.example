@@ -1,0 +1,119 @@
+# /etc/bodyguard/bodyguard.conf - konfigurasi Bodyguard HITL (STAI Ali)
+# WAJIB: milik root, mode 0640, grup guard  ->  chown root:guard; chmod 0640
+# Rahasia (token bot, kunci HMAC, allowlist approver) TIDAK di sini, melainkan di file env root:root 0600.
+# Semua angka punya batas keras di kode; nilai di luar batas = config ditolak (bukan dipakai).
+
+[general]
+# observe  = T0 saja (T1/T2 hanya dicatat)
+# dry-run  = T1 disimulasikan (breaker namespace terpisah), T2 dicatat tanpa dikirim ke bot approval
+# enforce  = T1 nyata (dibatasi breaker), T2 dikirim ke bot approval
+# Mulai dengan dry-run 3-7 hari untuk menyetel false positive, baru naik ke enforce.
+mode = dry-run
+state_dir = /var/lib/bodyguard
+log_file = /var/log/bodyguard/bodyguard.jsonl
+display_tz_offset_hours = 7
+display_tz_label = WIB
+# Temuan yang sama baru dialertkan ulang setelah N jam.
+realert_after_hours = 24
+
+[limits]
+# Circuit breaker T1 (jendela geser 60 menit). Batas keras kode: ip <= 60, chmod <= 20.
+max_ip_blocks_per_hour = 20
+max_chmod_per_hour = 5
+# TTL blokir IP per severity (detik, 3600..86400).
+ip_block_ttl_critical = 86400
+ip_block_ttl_high = 21600
+ip_block_ttl_medium = 3600
+# Masa berlaku tombol persetujuan T2 (default 30 menit; kedaluwarsa = DITOLAK).
+t2_ttl_seconds = 1800
+# Usulan T2 yang DITOLAK tidak diajukan ulang selama N hari; yang KEDALUWARSA diajukan ulang setelah N jam.
+t2_suppress_after_reject_days = 7
+t2_reask_after_expired_hours = 6
+
+[whitelist]
+cloudflare_file = /etc/bodyguard/cloudflare-ips.txt
+admin_subnets_file = /etc/bodyguard/admin-subnets.txt
+# CIDR tambahan dipisah spasi (mis. IP monitoring uptime).
+extra =
+
+[wrappers]
+sudo = /usr/bin/sudo
+bg_root = /usr/local/sbin/bg-root
+
+[ioc]
+rules_file = /etc/bodyguard/ioc_rules.json
+# Folder DATA (target T1 chmod 000). HARUS sama dengan [contain] data_roots di root.conf.
+# SESUAIKAN. Jangan masukkan web root aplikasi (mis. Laravel public/) atau folder kode.
+data_dirs =
+    /var/www/html/*/wp-content/uploads
+    /var/www/html/SESUAIKAN-ojs/public
+    /var/www/html/SESUAIKAN-situs/fonts
+    /var/www/html/SESUAIKAN-situs/ijazah
+# Folder KODE tambahan untuk pindai IOC (hanya alert/T2/T3, tidak pernah T1). mu-plugins WP otomatis dipindai.
+# Pindai pertama bisa berat; aktifkan bertahap, mis. tema aktif dulu.
+code_dirs =
+# Pola (fnmatch, path lengkap) file PHP di folder data yang memang sah (diisi saat masa dry-run).
+data_php_allow =
+head_bytes = 131072
+tail_bytes = 65536
+max_php_bytes = 2097152
+max_files_per_run = 300000
+
+[accesslog]
+# Log akses nginx. Kolom IP HARUS $remote_addr (dengan real_ip Cloudflare), lihat etc/nginx-realip-cloudflare.conf.example
+files = /var/log/nginx/access.log
+# Kosong = format "combined" bawaan nginx. Regex kustom wajib punya grup (?P<ip>) (?P<uri>) (?P<status>).
+line_regex =
+# Pertama kali jalan: hanya baca N byte terakhir (hindari memblokir IP dari aktivitas lama).
+initial_tail_bytes = 2097152
+max_bytes_per_run = 52428800
+block_score_medium = 3
+block_score_high = 6
+block_score_critical = 10
+
+[accounts]
+mysql = /usr/bin/mysql
+# Hanya SELECT (lihat sql/grants.sql). root:guard 0640.
+ro_defaults_file = /etc/bodyguard/mysql-ro.cnf
+# Hak UPDATE per-kolom untuk aksi T2 nonaktifkan akun. root:guard-approve 0640 (hanya gatekeeper).
+t2_defaults_file = /etc/bodyguard/mysql-t2.cnf
+# yes = saat menonaktifkan akun OJS, putuskan juga sesinya (butuh GRANT UPDATE(user_id) ON sessions).
+ojs_logout_sessions = no
+
+# Satu bagian per situs. type: wordpress | ojs. db kosong = audit akun dilewati untuk situs itu.
+[site:SESUAIKAN-wp-utama]
+type = wordpress
+root = /var/www/html/SESUAIKAN-wp-utama
+db = SESUAIKAN_db_wp
+prefix = wp_
+
+[site:SESUAIKAN-ojs]
+type = ojs
+root = /var/www/html/SESUAIKAN-ojs
+db = SESUAIKAN_db_ojs
+
+[integrity]
+# off | report | command  (lihat README: mengikat web-integrity-cek.sh)
+mode = off
+# mode=report: laporan terbaru yang ditulis cron web-integrity-cek.sh
+report_glob = /var/log/web-integrity/*.log
+# mode=command: perintah cek read-only yang dijalankan sebagai guard
+command =
+# Regex baris laporan: grup (?P<path>) wajib, (?P<kind>) opsional. Kosong = default (CHANGED/NEW/DELETED: /path).
+line_regex =
+max_report_bytes = 8388608
+
+[notify]
+# command = SATU pengirim untuk semua modul (notify-run.sh --pesan); token tetap dari env systemd (alert.env).
+# telegram = Bot API langsung (cadangan) | log = hanya log
+backend = command
+command = /var/opt/script/tools/notify-run.sh --pesan --env - --token-var BG_ALERT_BOT_TOKEN --chat-var BG_ALERT_CHAT_ID
+max_messages_per_hour = 30
+urgent_max_per_hour = 20
+
+[gatekeeper]
+env_file = /etc/bodyguard/gatekeeper.env
+alert_env_file = /etc/bodyguard/alert.env
+poll_timeout = 25
+# Maksimal permintaan T2 yang tampil bersamaan (anti kelelahan persetujuan); sisanya antre.
+max_pending = 8

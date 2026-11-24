@@ -1,0 +1,11 @@
+{
+  "_catatan": "Opsional. Salin ke /etc/bodyguard/ioc_rules.json (root:guard 0640). Aturan di sini MENAMBAH/MENIMPA default berdasarkan id. Hindari regex dengan quantifier bersarang (ReDoS).",
+  "content": [
+    {"id": "IOC-HACKED-BY", "severity": "high", "pattern": "(?i)hacked\\s+by", "files": ["php", "other"], "where": ["data", "code"], "desc": "contoh: defacement"}
+  ],
+  "username": [],
+  "plugin": [],
+  "uri": [],
+  "disable": [],
+  "benign_sha256": []
+}
