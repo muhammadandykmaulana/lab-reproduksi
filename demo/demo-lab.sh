@@ -9,7 +9,7 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 . "$DIR/lib/umum.sh"
 perlu_root
 DEMO=/var/tmp/lab-demo
-sumber() { find "$DIR/modul" "$DIR/lingkungan" -name "$1" -type f | head -1; }   # script dicari di folder modul
+sumber() { find "$DIR/modul" "$DIR/pendukung" "$DIR/pencegahan" -name "$1" -type f | head -1; }   # skrip dicari di folder lab
 if [ "${1:-}" = "--bersihkan" ]; then
   case "$DEMO" in /var/tmp/lab-demo) rm -rf --one-file-system "$DEMO"; sukses "folder demo dihapus";; esac; exit 0
 fi
@@ -58,9 +58,9 @@ langkah "4. Deteksi: web-integrity-cek.sh membandingkan dengan baseline (alert i
 bash "$DEMO/web-integrity-cek.sh" 2>&1 | sed 's/^/   /' | head -30
 jeda
 
-langkah "4b. Menerima baseline baru DITOLAK selama masih ada IOC (opsi --accept --yes, dipakai gerbang T2)"
+langkah "4b. Menerima baseline baru DITOLAK selama masih ada IOC (opsi --accept --yes, dipakai SOC-IR setelah admin setuju)"
 bash "$DEMO/web-integrity-cek.sh" --accept --yes 2>&1 | tail -2 | sed 's/^/   /'
-echo "   kode keluar 3 = baseline tidak diubah; manusia harus menyelidiki dulu (collect3_evidence.sh)."
+echo "   kode keluar 3 = baseline tidak diubah; manusia harus menyelidiki dulu (kumpulkan-bukti.sh)."
 jeda
 
 langkah "5. Masalah di lapangan: backup malam ini IKUT menyimpan berkas yang sudah disusupi"
@@ -84,4 +84,4 @@ jeda
 
 langkah "Selesai"
 echo "   Demo hanya memakai $DEMO. Hapus dengan: sudo bash $DIR/lab.sh demo-bersihkan"
-echo "   Untuk server sungguhan: lab.sh baseline -> lab.sh cek -> lab.sh jadwal-pasang"
+echo "   Untuk server sungguhan: lab.sh baseline -> lab.sh cek -> lab.sh pasang-cron"

@@ -227,5 +227,5 @@ for d in $(q0 "SHOW DATABASES" | grep -ixE 'dvwa|test|demo|testing|wordpress_tes
 echo
 echo "Ringkasan: FAIL=$NF WARN=$NW | baseline: $BASE"
 [ "$NF" -eq 0 ] && [ "$NW" -eq 0 ] && ok "tidak ada temuan"
-[ "$NF" -gt 0 ] && echo "Tindak lanjut: periksa akun di atas, lalu kumpulkan bukti: collect3_evidence.sh --auto. Terima perubahan sah dengan --accept."
+[ "$NF" -gt 0 ] && echo "Tindak lanjut: periksa akun di atas, lalu kumpulkan bukti: kumpulkan-bukti.sh --auto. Terima perubahan sah dengan --accept."
 exit $([ "$NF" -gt 0 ] && echo 1 || echo 0)

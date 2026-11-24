@@ -1,11 +1,12 @@
 # Peta berkas dan keterkaitan
 
-Peta ini menjelaskan berkas penting di dua folder server: folder lab `skripsi-lab` dan folder kerja `tools`.
+Peta ini menjelaskan berkas penting di dua folder server: folder lab (`lab-reproduksi`, atau `skripsi-lab` di
+server STAI-ALI) dan folder kerja `tools`.
 
 > [!IMPORTANT]
-> **Ubah di lab, jalankan dari tools.** `/var/opt/script/tools/skripsi-lab/` adalah sumber (repo Git). Cron, systemd,
-> dan SOC-IR memanggil salinan **rata** di `/var/opt/script/tools/`. Setelah mengganti skrip di lab, pasang ulang ke
-> tools (`install -m 700 …`), karena yang dijalankan selalu salinan di tools.
+> **Ubah di folder lab, jalankan dari tools.** Folder lab adalah sumbernya (repo Git). Cron, systemd, dan SOC-IR
+> memanggil salinan skrip di `/var/opt/script/tools/`. Setelah skrip di folder lab diganti, pasang ke tools dengan
+> `lab.sh sinkron --pasang`, karena yang dijalankan selalu salinan di tools.
 
 ## Daftar isi
 
@@ -22,11 +23,11 @@ Peta ini menjelaskan berkas penting di dua folder server: folder lab `skripsi-la
 ```mermaid
 flowchart LR
   subgraph LAB["skripsi-lab: sumber, masuk Git"]
-    L1["modul/ lapisan/ lingkungan/ uji/"]
+    L1["modul/ pencegahan/ pendukung/ uji/"]
     L2["install.sh, lab.sh, atur-token.sh"]
     L3["jadwal/ config/*.example"]
   end
-  subgraph TOOLS["tools: salinan rata yang dijalankan"]
+  subgraph TOOLS["tools: salinan yang dijalankan"]
     T1["*.sh *.py"]
   end
   subgraph SYS["sistem"]
@@ -34,8 +35,8 @@ flowchart LR
     S["systemd: web-integrity, persistence-killer,<br/>cek-disk, soc_ir, bodyguard"]
     E["/etc/*.env: rahasia, root 600"]
   end
-  L1 -- "install.sh / install -m 700" --> T1
-  L3 -- "lab.sh jadwal-pasang" --> C
+  L1 -- "install.sh / lab.sh sinkron" --> T1
+  L3 -- "lab.sh pasang-cron" --> C
   L3 --> S
   L2 -- "atur-token.sh, lab.sh ip-admin/ojs-db" --> E
   C --> T1
@@ -60,9 +61,9 @@ skripsi-lab/
 ├── PANDUAN-LAB.pdf                panduan bergambar untuk pembaca awam
 ├── .gitignore                     mencegah rahasia, backup, log, dan data server ikut ter-push
 ├── install.sh                     pemasang: paket, salin skrip ke tools, tanya IP/OJS/token
-├── lab.sh                         menu: status, ip-admin, ojs-db, demo, baseline, cek, jadwal, soc-ir, uji, copot
+├── lab.sh                         menu: status, sinkron, ip-admin, ojs-db, demo, baseline, cek, pasang-cron, soc-ir, uji, uninstall
 ├── atur-token.sh                  isi/ubah token Telegram, Cloudflare, bot persetujuan (ke /etc, bukan ke lab)
-├── cek-rahasia.sh                 periksa folder sebelum git push; mencetak file:baris saja, bukan isinya
+├── cek-sebelum-share.sh                 periksa folder sebelum git push; mencetak file:baris saja, bukan isinya
 ├── lib/
 │   └── umum.sh                    fungsi bersama: tanya, set_kv/get_kv (tulis env 600), status_set
 │
@@ -71,29 +72,29 @@ skripsi-lab/
 │   │   ├── web-integrity-cek.sh   M1: hash berkas web vs baseline, PHP di gambar, admin/unggahan OJS, brute force
 │   │   └── webscan-wp.sh          pelengkap M1: pola serangan WordPress, mingguan
 │   ├── M2-database-akun/
-│   │   └── db-integrity-cek.sh    M2: admin baru, akun siluman, opsi berbahaya di DB (hanya SELECT)
+│   │   └── db-integrity-cek.sh    M2: admin baru, akun palsu (susupan), opsi berbahaya di DB (hanya SELECT)
 │   ├── M3-proses/
 │   │   ├── persistence-killer.sh  M3: proses/cron/systemd tersembunyi (gsocket dsb.); dry-run / kill / auto
 │   │   └── pk-systemd-setup.sh    pasang timer M3 tiap menit: dry | auto | off
 │   ├── M4-backup-verify/
 │   │   └── backup-verify.sh       M4: backup bisa dipakai? keutuhan, ukuran, izin 600, uji pulih, penanda lolos
-│   ├── M5-penjaga-keputusan/
+│   ├── M5-blokir-attacker/
 │   │   ├── ip-report.sh           M5: perilaku IP 30 hari dari log Nginx + sesi/admin OJS -> /root/ip-report-*
 │   │   ├── cf-guard.py            M5: kelola rule blokir Cloudflare dari hasil ip-report; perintah bot /blok
 │   │   ├── soc_ir-data.sh         salin data terbaru ke /var/lib/soc_ir/data untuk analisis soc_ir (read-only)
 │   │   ├── soc_ir-kirim.sh        kirim laporan soc_ir ke chat SOC (rapi, maks 3300 byte)
-│   │   └── soc-ir/bodyguard-hitl/ SOC-IR: pemindai, tingkat aksi T0-T3, gerbang persetujuan T2 lewat bot
+│   │   └── soc-ir/bodyguard-hitl/ SOC-IR: pemindai, tingkat tindakan T0-T3, persetujuan admin (T2) lewat bot
 │   └── umum/                      dipakai semua modul
-│       ├── notify-run.sh          SATU-SATUNYA pengirim Telegram; log run; hanya temuan baru; pesan dikelompokkan
-│       ├── penjaga.sh             SATU tombol FREEZE untuk semua tindakan otomatis
-│       ├── bukti.py               simpan bukti: salinan 0400 + SHA-256 + MANIFEST.tsv
-│       └── collect3_evidence.sh   kumpulkan bukti insiden (menyalin, tidak menghapus)
+│       ├── notify-run.sh          satu-satunya pengirim Telegram; log tiap run; hanya temuan baru; pesan dikelompokkan
+│       ├── freeze.sh              satu tombol untuk menghentikan semua tindakan otomatis (on/off/status)
+│       ├── simpan-bukti.py        simpan bukti: salinan 0400 + SHA-256 + MANIFEST.tsv
+│       └── kumpulkan-bukti.sh        kumpulkan bukti insiden, termasuk temuan M1 (menyalin, tidak menghapus)
 │
-├── lapisan/                       ── LAPISAN PERTAHANAN (L3, L4), dijalankan manual ──
-│   ├── L3-trigger-ojs.sh          L3: dua trigger tambahan OJS (tolak akun berpenanda, catat peran admin)
-│   └── L4-hardening-db.sh         L4: cabut hak global akun aplikasi, kunci akun lama, bisa dibatalkan
+├── pencegahan/                    ── LAPISAN PENCEGAHAN (L3, L4), dijalankan manual ──
+│   ├── L3-trigger-ojs.sh          L3: dua trigger tambahan OJS (tolak akun palsu, catat peran admin); cek/uji/pasang/batal
+│   └── L4-hardening-db.sh         L4: cabut hak global akun aplikasi, kunci akun lama; cek/uji/pasang/batal
 │
-├── lingkungan/                    ── PENDUKUNG SERVER (tidak dievaluasi sebagai modul) ──
+├── pendukung/                     ── PENDUKUNG SERVER (tidak dievaluasi sebagai modul) ──
 │   ├── backup-all-db.sh           L5 tingkat 1: dump semua DB 00:10
 │   ├── backup-all-web.sh          L5 tingkat 1: zip semua situs 00:10
 │   ├── backup_vps.py              L5 tingkat 2: zip VPS -> Telegram + Git (hanya bila M4 lolos)
@@ -101,14 +102,14 @@ skripsi-lab/
 │   ├── cek-disk.py                pantau disk dan umur backup (service)
 │   ├── arsip-log.sh               salin log Nginx yang sudah dirotasi ke arsip bertanggal
 │   ├── ip-kantor-sync.sh          IP admin = IP tetap + IP dari nama DDNS; ikut perbarui izin situs uji
-│   ├── salin-uji.py               buat/tarik ulang situs salinan uji-*, log terpisah di /var/log/nginx/uji
+│   ├── salin-uji.py               buat/tarik ulang situs salinan uji-* (cek/buat/status/hapus), log terpisah di /var/log/nginx/uji
 │   ├── notif-ojs.py               notifikasi pendaftar OJS baru (L2)
 │   ├── update-ip-cloudflare.sh    daftar IP Cloudflare untuk real_ip Nginx
 │   ├── img-scan.sh                cari backdoor di berkas gambar (manual)
 │   └── fw.sh                      aturan firewall (manual)
 │
 ├── uji/
-│   └── uji-skripsi.py             alat uji skripsi: K1-K11, skenario S/N/R, panen log, metrik, rekap Bab IV
+│   └── uji-skripsi.py             alat uji skripsi: K1-K11, 9 skenario + R1, ambil log harian, metrik, rekap Bab IV
 ├── jadwal/
 │   ├── lab-reproduksi.cron        sumber semua baris cron
 │   ├── lab-web-integrity.*        timer M1 tiap jam
@@ -122,15 +123,15 @@ skripsi-lab/
 
 ## 3. Folder kerja: tools
 
-Semua skrip dari `modul/`, `lapisan/`, `lingkungan/`, dan `uji/` disalin rata ke sini, sehingga jalurnya pendek dan tetap.
+Semua skrip dari `modul/`, `pencegahan/`, `pendukung/`, dan `uji/` disalin ke satu folder ini, jadi alamatnya pendek dan tetap.
 
 ```text
 /var/opt/script/tools/
 ├── skripsi-lab/              ← sumber (bagian 2)
 │
 ├── notify-run.sh             dipanggil oleh hampir semua jadwal: notify-run.sh <nama-job> <perintah>
-├── penjaga.sh                status/freeze/unfreeze
-├── bukti.py, collect3_evidence.sh
+├── freeze.sh                 status / on / off
+├── simpan-bukti.py, kumpulkan-bukti.sh
 │
 ├── web-integrity-cek.sh      M1   (timer tiap jam)
 ├── webscan-wp.sh             M1+  (Minggu 04:00)
@@ -153,11 +154,11 @@ Semua skrip dari `modul/`, `lapisan/`, `lingkungan/`, dan `uji/` disalin rata ke
 ├── notif-ojs.py              (tiap 5 menit)
 ├── salin-uji.py              manual
 ├── update-ip-cloudflare.sh, img-scan.sh, fw.sh
-└── uji-skripsi.py            manual + --panen 07:05
+└── uji-skripsi.py            manual + --ambil-log 07:05
 ```
 
 > [!NOTE]
-> Di tools juga ada skrip lama milik server yang bukan bagian lab. `lab.sh copot` hanya menghapus skrip yang isinya
+> Di tools juga ada skrip lama milik server yang bukan bagian lab. `lab.sh uninstall` hanya menghapus skrip yang isinya
 > sama persis dengan versi lab, jadi skrip lain tidak tersentuh.
 
 ---
@@ -183,26 +184,26 @@ Semua skrip dari `modul/`, `lapisan/`, `lingkungan/`, dan `uji/` disalin rata ke
 ├── filehash-web-all/          baseline M1 (hash berkas)
 ├── db-integrity/              baseline M2 (*.admins, trusted_ips.txt)
 ├── BACKUP/{DB,web,vps}/       hasil backup tingkat 1 dan 2
-├── bukti/<kasus>/             bukti insiden (bukti.py)
+├── bukti/<kasus>/             bukti insiden (simpan-bukti.py)
 ├── arsip-log/nginx/           arsip log Nginx (arsip-log.sh)
 └── script/
     ├── known_admins.txt       admin OJS yang dikenal (M1)
-    └── uji-skripsi/           data uji-skripsi.py: hasil.csv, harian.json, baseline-arsip/ (log ber-SHA-256)
+    └── uji-skripsi/           data uji-skripsi.py: hasil.csv (+ hasil.versi), harian.json, baseline-arsip/ (log ber-SHA-256)
 
 /var/lib/
-├── penjaga/FREEZE             ada = semua tindakan otomatis berhenti
+├── freeze/FREEZE              kalau berkas ini ada, semua tindakan otomatis berhenti (freeze.sh)
 ├── backup-verify/             penanda lolos-TANGGAL dari M4
 └── soc_ir/data/               salinan data untuk analisis soc_ir (read-only)
 
 /var/log/
-├── nginx/*_access.log         log produksi: sumber ip-report, cf-guard, SOC-IR, panen
+├── nginx/*_access.log         log situs asli: bahan ip-report, cf-guard, SOC-IR, dan rekap log harian
 ├── nginx/uji/                 log situs salinan (terpisah, tidak ikut dianalisis)
 ├── audit-run/                 log setiap run notify-run.sh
 └── soc_ir/laporan-*.txt       laporan soc_ir
 
 /root/
 ├── ip-report-*.txt, ip-behavior-*.csv, ip-suspects-*.txt   keluaran ip-report.sh
-├── hardening-db/              cadangan grant, SQL, undo dari L4-hardening-db.sh   (700)
+├── hardening-db/              cadangan grant, SQL, dan SQL pembatalan dari L4-hardening-db.sh   (700)
 ├── trigger-l3/                SQL pemasangan trigger L3                           (700)
 └── uji-salinan/<domain>.env   kata sandi DB situs salinan                         (600)
 
@@ -229,8 +230,8 @@ flowchart TB
   end
   NR["notify-run.sh<br/>log run + hanya temuan baru"]
   TG(("Telegram<br/>chat notifikasi"))
-  FZ{{"penjaga.sh<br/>FREEZE"}}
-  BK["bukti.py<br/>/var/opt/bukti"]
+  FZ{{"freeze.sh<br/>FREEZE"}}
+  BK["simpan-bukti.py<br/>/var/opt/bukti"]
 
   M1 --> NR
   M2 --> NR
@@ -261,7 +262,7 @@ flowchart LR
   SK["soc_ir-kirim.sh"]
   SOC(("Telegram<br/>chat SOC"))
   BG["SOC-IR bodyguard<br/>T0-T3"]
-  GT(("bot persetujuan<br/>gerbang T2"))
+  GT(("bot persetujuan<br/>admin (T2)"))
 
   IPS --> ENV
   LOG --> IR
@@ -308,10 +309,10 @@ flowchart LR
     UL[("/var/log/nginx/uji")]
     IZ["uji-izin.conf<br/>hanya IP admin"]
   end
-  L3["L3-trigger-ojs.sh<br/>uji dulu, lalu terapkan"]
+  L3["L3-trigger-ojs.sh<br/>uji di salinan, lalu pasang"]
   US["uji-skripsi.py"]
   AR["arsip-log.sh 00:40"]
-  PN["uji-skripsi.py --panen 07:05"]
+  PN["uji-skripsi.py --ambil-log 07:05"]
   DATA[("/var/opt/script/uji-skripsi<br/>harian.json + arsip SHA-256")]
   BAB4["Rekap Bab IV"]
 
@@ -336,8 +337,8 @@ flowchart LR
 | `/etc/web-integrity.env` | `install.sh`, `atur-token.sh`, `lab.sh ip-admin`, `lab.sh ojs-db`, `ip-kantor-sync.sh` | M1, M2, M4, `ip-report.sh`, `notify-run.sh`, `soc_ir-kirim.sh`, backup, `cek-all.sh`, `cek-disk.py`, `notif-ojs.py`, `salin-uji.py`, `L3-trigger-ojs.sh`, `uji-skripsi.py` |
 | `/etc/cek-disk.env` | `atur-token.sh` | `cek-disk.py`, `backup_vps.py` |
 | `/etc/bodyguard/cloudflare.env` | `atur-token.sh cloudflare`, `ip-kantor-sync.sh` (CG_OFFICE_IPS) | `cf-guard.py` |
-| `/etc/bodyguard/gatekeeper.env` | `atur-token.sh` | bot persetujuan SOC-IR (gerbang T2) |
+| `/etc/bodyguard/gatekeeper.env` | `atur-token.sh` | bot persetujuan SOC-IR (T2) |
 | `/etc/lab-reproduksi/status` | `lab.sh`, `atur-token.sh` | `lab.sh status` |
 
 > [!CAUTION]
-> Semua berkas di bagian 4 tetap di server dan **tidak** masuk Git. `.gitignore` dan `cek-rahasia.sh` menjaganya.
+> Semua berkas di bagian 4 tetap di server dan **tidak** masuk Git. `.gitignore` dan `cek-sebelum-share.sh` menjaganya.

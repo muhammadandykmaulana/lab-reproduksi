@@ -52,9 +52,9 @@ if [ "$SUMBER" != "$LAB_TUJUAN" ]; then
 fi
 chown -R root:root "$LAB_TUJUAN"; chmod -R go-w "$LAB_TUJUAN"; chmod 750 "$LAB_TUJUAN"
 TS=$(date +%Y%m%d-%H%M%S); dilewati=()
-# script dari folder modul (M1-M5 dan utilitas bersama), lingkungan pendukung, dan alat uji dipasang rata di $TOOLS,
+# skrip dari folder modul (M1-M5 dan utilitas bersama), pencegahan, pendukung, dan alat uji dipasang ke $TOOLS,
 # karena cron, timer, dan root.conf SOC-IR memanggilnya dengan jalur tetap /var/opt/script/tools/<nama>.
-for f in "$LAB_TUJUAN"/modul/*/*.sh "$LAB_TUJUAN"/modul/*/*.py "$LAB_TUJUAN"/lapisan/*.sh "$LAB_TUJUAN"/lingkungan/*.sh "$LAB_TUJUAN"/lingkungan/*.py "$LAB_TUJUAN"/uji/*.py; do
+for f in "$LAB_TUJUAN"/modul/*/*.sh "$LAB_TUJUAN"/modul/*/*.py "$LAB_TUJUAN"/pencegahan/*.sh "$LAB_TUJUAN"/pendukung/*.sh "$LAB_TUJUAN"/pendukung/*.py "$LAB_TUJUAN"/uji/*.py; do
   n=$(basename "$f"); t="$TOOLS/$n"
   if [ -f "$t" ] && ! cmp -s "$f" "$t"; then
     if ya_tidak "  $n sudah ada di $TOOLS dan berbeda. Timpa dengan versi lab (cadangan dibuat)?" n; then
@@ -63,11 +63,12 @@ for f in "$LAB_TUJUAN"/modul/*/*.sh "$LAB_TUJUAN"/modul/*/*.py "$LAB_TUJUAN"/lap
   else install -m 750 -o root -g root "$f" "$t"; fi
 done
 sukses "skrip dipasang di $TOOLS"
+singkirkan_nama_lama "$TOOLS/.sebelum-sinkron/install-$TS"
 [ ${#dilewati[@]} -gt 0 ] && info "versi server dipertahankan untuk: ${dilewati[*]}"
 for d in /var/opt/filehash-web-all /var/opt/db-integrity /var/opt/bukti /var/opt/BACKUP/web /var/opt/BACKUP/DB /var/opt/BACKUP/vps \
          /var/log/audit-run /var/lib/audit-run /var/lib/backup-verify /var/log/backup_vps "$ETC_LAB"; do mkdir -p "$d"; chmod 700 "$d"; done
 sukses "folder data, bukti (satu folder untuk semua modul), backup, dan log disiapkan (izin 700)"
-bash "$TOOLS/penjaga.sh" siapkan >/dev/null && sukses "FREEZE bersama disiapkan: /var/lib/penjaga (penjaga.sh status|freeze|unfreeze)"
+bash "$TOOLS/freeze.sh" siapkan >/dev/null && sukses "freeze disiapkan: /var/lib/freeze (freeze.sh status | on \"alasan\" | off \"alasan\")"
 
 # ------------------------------------------------------------------ 2b. www-data dilarang memakai cron dan at
 judul "2b. Larang pengguna web (www-data) memasang jadwal cron/at"
@@ -102,8 +103,8 @@ else bash "$LAB_TUJUAN/atur-token.sh" semua; fi
 # ------------------------------------------------------------------ 5. jadwal
 judul "5. Jadwal otomatis"
 if ya_tidak "Pasang jadwal otomatis sekarang (cron + timer)? Disarankan SETELAH baseline dibuat (lab.sh menu 3)" n; then
-  bash "$LAB_TUJUAN/lab.sh" jadwal-pasang
-else info "jadwal belum dipasang. Pasang nanti: sudo bash $LAB_TUJUAN/lab.sh jadwal-pasang"; status_set JADWAL belum; fi
+  bash "$LAB_TUJUAN/lab.sh" pasang-cron
+else info "jadwal belum dipasang. Pasang nanti: sudo bash $LAB_TUJUAN/lab.sh pasang-cron"; status_set JADWAL belum; fi
 
 status_set TERPASANG "$(date '+%F %T')"
 judul "Selesai"

@@ -16,7 +16,7 @@
 #   - token tidak muncul di daftar proses: URL dikirim ke curl lewat berkas konfigurasi sementara (-K)
 #   - TELEGRAM_API_BASE (opsional) untuk Bot API lokal; bawaan https://api.telegram.org
 #
-# Pengecualian yang disengaja: tombol persetujuan T2 (gerbang SOC-IR) dan unggah berkas backup tingkat 2
+# Pengecualian yang disengaja: tombol persetujuan T2 (SOC-IR) dan unggah berkas backup tingkat 2
 # tidak lewat script ini, karena keduanya bukan notifikasi teks.
 set -uo pipefail
 umask 077

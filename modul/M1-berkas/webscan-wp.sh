@@ -2,7 +2,7 @@
 # webscan-wp.sh - pemindai khusus pola serangan WordPress yang kita alami (hanya membaca)
 # Pakai: sudo bash webscan-wp.sh [-p /var/www/html] [-d HARI] [-o laporan.txt]
 # Melengkapi webscan.sh. Cek:
-#  1. Akun admin siluman (DB): email .internal, login wpsvc*, registrasi baru, admin tak dikenal
+#  1. Akun admin palsu/susupan (DB): email .internal, login wpsvc*, registrasi baru, admin tak dikenal
 #  2. Plugin samaran: nama berakhiran hex acak, plugin 1 file php, plugin tidak aktif berisi php
 #  3. Pola webshell token (hash_equals + $_GET/$_REQUEST, marker <<S>>, GH_R0_EXEC, SSInjection)
 #  4. PHP di uploads/cache/images, mu-plugins tak dikenal, error_log di core
@@ -21,7 +21,7 @@ IOC_RE='0xNix Encrypted Code|SPLIT&ENCRYPTed|yoibre\.com|aHR0cHM6Ly95b2li|hash_e
 
 echo "=== webscan-wp $(date '+%F %T') path=$PATH_SCAN ${DAYS:+hari=$DAYS} ==="
 
-echo; echo "-- 1) Akun siluman / admin baru di database"
+echo; echo "-- 1) Akun palsu / admin baru di database"
 for db in $(mariadb -N -e "SHOW DATABASES" 2>/dev/null | grep -vE '^(information_schema|performance_schema|mysql|sys)$'); do
   for t in $(mariadb -N -e "SELECT table_name FROM information_schema.columns WHERE table_schema='$db' AND column_name='user_login' AND table_name LIKE '%users'" 2>/dev/null); do
     pre=${t%users}

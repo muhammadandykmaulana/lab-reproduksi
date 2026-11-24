@@ -70,3 +70,32 @@ get_kv() { [ -f "$1" ] && sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?$2=\"?(
 status_set() { mkdir -p "$ETC_LAB"; chmod 700 "$ETC_LAB"; touch "$STATUS_FILE"; chmod 600 "$STATUS_FILE"
   grep -v "^$1=" "$STATUS_FILE" > "$STATUS_FILE.tmp" 2>/dev/null; echo "$1=$2" >> "$STATUS_FILE.tmp"; mv "$STATUS_FILE.tmp" "$STATUS_FILE"; }
 status_get() { [ -f "$STATUS_FILE" ] && sed -n "s/^$1=//p" "$STATUS_FILE" | tail -1; }
+
+# Nama lama yang sudah diganti. Tidak ada alias: berkas lama dipindah ke folder cadangan, lalu rujukannya di
+# cron, systemd, dan /etc/bodyguard dilaporkan supaya diganti (lihat README bagian "Pindah dari versi lama").
+NAMA_LAMA="penjaga.sh bukti.py collect3_evidence.sh kumpul-bukti.sh"
+POLA_LAMA='penjaga\.sh|(^|[^-])bukti\.py|collect3|kumpul-bukti\.sh|--panen|/var/lib/penjaga|PENJAGA_FREEZE|M5-penjaga-keputusan|M5-blokir-ip'
+singkirkan_nama_lama() {  # $1 folder cadangan
+  local n d_lama=/var/lib/penjaga d_baru=/var/lib/freeze hits
+  for n in $NAMA_LAMA; do
+    [ -e "$TOOLS/$n" ] || [ -L "$TOOLS/$n" ] || continue
+    mkdir -p "$1"; chmod 700 "$1"; mv "$TOOLS/$n" "$1/$n" && echo "  [ OK ] $n dipindah ke $1 (diganti nama baru)"
+  done
+  # FREEZE pindah dari /var/lib/penjaga ke /var/lib/freeze (status freeze yang sedang aktif ikut dipindah)
+  if [ -d "$d_lama" ]; then
+    bash "$TOOLS/freeze.sh" siapkan >/dev/null 2>&1
+    for n in FREEZE riwayat.log; do
+      [ -e "$d_lama/$n" ] && [ ! -e "$d_baru/$n" ] && mv "$d_lama/$n" "$d_baru/$n" && echo "  [ OK ] $d_lama/$n -> $d_baru/$n"
+    done
+    rmdir "$d_lama" 2>/dev/null && echo "  [ OK ] folder lama $d_lama dihapus (kosong)"
+  fi
+  # laporkan rujukan nama lama (hanya nama berkas dan nomor baris, isi baris tidak dicetak)
+  hits=$(grep -rnE "$POLA_LAMA" /etc/crontab /etc/cron.d /var/spool/cron/crontabs /etc/systemd/system /etc/bodyguard 2>/dev/null \
+         | cut -d: -f1,2 | sort -u)
+  if [ -n "$hits" ]; then
+    echo "  [WARN] masih ada nama lama di berkas berikut (ganti dengan sed, lihat README bagian 'Pindah dari versi lama'):"
+    printf '         %s\n' $hits
+  else
+    echo "  [ OK ] tidak ada nama lama di cron, systemd, dan /etc/bodyguard"
+  fi
+}

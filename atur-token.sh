@@ -4,7 +4,7 @@
 #   sudo bash atur-token.sh               menu
 #   sudo bash atur-token.sh telegram      token bot + chat id (alert SOC dan laporan backup)
 #   sudo bash atur-token.sh cloudflare    token API Cloudflare + zona + rule dinamis (untuk cf-guard.py)
-#   sudo bash atur-token.sh persetujuan   bot persetujuan terpisah: SATU gerbang tombol Setujui/Tolak T2 (SOC-IR), juga untuk usulan cf-guard
+#   sudo bash atur-token.sh persetujuan   bot persetujuan terpisah: tombol Setujui/Tolak T2 (SOC-IR), juga untuk usulan cf-guard
 #   sudo bash atur-token.sh semua         ketiganya berurutan
 #   sudo bash atur-token.sh cek           uji token yang tersimpan (tanpa mencetak token)
 # Tiap pertanyaan ditunggu 60 detik. Tidak dijawab = dilewati; jalankan lagi skrip ini kapan saja.
@@ -130,7 +130,7 @@ for x in r.get("rules",[]): print("%s\t%s\t%s"%(r.get("id",""),x.get("id",""),x.
 # ------------------------------------------------------------------ bot persetujuan (terpisah dari bot notifikasi)
 persetujuan() {
   judul "Bot persetujuan (tombol Setujui/Tolak)"
-  echo "Pakai bot KEDUA dari @BotFather. Bot ini hanya di-poll oleh gerbang persetujuan SOC-IR (gatekeeper), satu-satunya"
+  echo "Pakai bot KEDUA dari @BotFather. Bot ini hanya dibaca oleh layanan persetujuan SOC-IR (gatekeeper), satu-satunya"
   echo "tempat persetujuan T2 untuk semua modul. Bot notifikasi tetap dipakai notify-run.sh dan bot SOC cf-guard."
   echo "ID Telegram Anda (approver) bisa dilihat dengan mengirim pesan ke bot itu lalu membuka .../bot<TOKEN>/getUpdates -> \"from\":{\"id\":...}."
   local tok idp
@@ -149,12 +149,12 @@ print(" ".join(sorted(ids)))')
   [ -n "$ap" ] && { set_kv "$GK" BG_APPROVER_IDS "$ap"; set_kv "$GK" BG_APPROVAL_CHAT_ID "${ap%%,*}"; set_kv "$ENV_CF" CG_APPROVER_IDS "$ap"; }
   [ -n "$(get_kv "$GK" BG_HMAC_KEY)" ] || set_kv "$GK" BG_HMAC_KEY "$(openssl rand -hex 32)"
   chmod 600 "$GK"
-  # bot SOC cf-guard (tanya-jawab /ringkas, /ip, /blok) memakai bot notifikasi; /blok diajukan ke gerbang di atas
+  # bot SOC cf-guard (tanya-jawab /ringkas, /ip, /blok) memakai bot notifikasi; /blok diajukan ke persetujuan admin di atas
   [ -n "$(get_kv "$ENV_CF" CG_TG_TOKEN)" ] || set_kv "$ENV_CF" CG_TG_TOKEN "$(get_kv "$ENV_WI" TELEGRAM_BOT_TOKEN)"
   [ -n "$(get_kv "$ENV_CF" CG_CHAT_ID)" ] || set_kv "$ENV_CF" CG_CHAT_ID "$(get_kv "$ENV_WI" TELEGRAM_CHAT_ID)"
   set_kv "$ENV_CF" CG_VIEW_CHATS "$(get_kv "$ENV_WI" TELEGRAM_CHAT_ID)"
   [ -n "$(get_kv "$ENV_CF" CG_HMAC_KEY)" ] || set_kv "$ENV_CF" CG_HMAC_KEY "$(openssl rand -hex 32)"
-  sukses "gerbang persetujuan tersimpan di $GK (root 600); bot SOC cf-guard di $ENV_CF"
+  sukses "bot persetujuan tersimpan di $GK (root 600); bot SOC cf-guard di $ENV_CF"
   status_set PERSETUJUAN "$([ -n "$ap" ] && echo ok || echo sebagian)"
 }
 

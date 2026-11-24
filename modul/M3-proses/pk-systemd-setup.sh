@@ -37,13 +37,13 @@ UNIT
 
 case "$MODE" in
   dry)  write_units "--dry-run --no-notify"
-        bash /var/opt/script/tools/penjaga.sh siapkan >/dev/null
+        bash /var/opt/script/tools/freeze.sh siapkan >/dev/null
         systemctl daemon-reload; systemctl enable --now persistence-killer.timer
         echo "MODE DRY-RUN aktif. Lihat: journalctl -u persistence-killer -n 50 --no-pager" ;;
   auto) write_units "--auto"
-        bash /var/opt/script/tools/penjaga.sh siapkan >/dev/null
+        bash /var/opt/script/tools/freeze.sh siapkan >/dev/null
         systemctl daemon-reload; systemctl enable --now persistence-killer.timer
-        echo "MODE AUTO-KILL aktif. Hentikan darurat (semua modul): penjaga.sh freeze "alasan"" ;;
+        echo "MODE AUTO-KILL aktif. Hentikan darurat (semua modul): freeze.sh on "alasan"" ;;
   off)  systemctl disable --now persistence-killer.timer || true
         echo "timer dimatikan" ;;
   sweep-on)

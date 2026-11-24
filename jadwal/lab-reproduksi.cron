@@ -1,4 +1,4 @@
-# /etc/cron.d/lab-reproduksi - jadwal lab reproduksi (Tabel 3.5 dan Gambar 3.3 skripsi). Dipasang oleh: lab.sh jadwal-pasang
+# /etc/cron.d/lab-reproduksi - jadwal lab reproduksi (Tabel 3.5 dan Gambar 3.3 skripsi). Dipasang oleh: lab.sh pasang-cron
 # M1 (timer tiap jam) dan M3 (timer tiap menit) memakai systemd, bukan cron. Semua pesan Telegram lewat notify-run.sh.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -20,19 +20,19 @@ T=/var/opt/script/tools
 30 3 * * 6   root  $T/notify-run.sh db-integrity-full $T/db-integrity-cek.sh --full
 # --- M1 pelengkap: webscan WordPress mingguan
 0 4 * * 0    root  $T/notify-run.sh webscan-wp nice -n 19 ionice -c3 $T/webscan-wp.sh -d 8
-# --- lingkungan: ringkasan kesehatan server (memanggil hasil modul, tidak mengulang pemeriksaannya)
+# --- pendukung: ringkasan kesehatan server (memanggil hasil modul, tidak mengulang pemeriksaannya)
 0 6 * * *    root  $T/notify-run.sh cek-semua $T/cek-all.sh -q
 # --- L2: notifikasi pendaftar OJS baru
 */5 * * * *  root  /usr/bin/python3 $T/notif-ojs.py >> /var/log/notif-ojs.log 2>&1
 # --- data penelitian: arsip log Nginx yang sudah dirotasi (baseline dan evaluasi tidak ikut terhapus logrotate)
 40 0 * * *   root  $T/arsip-log.sh > /dev/null 2>&1
-# --- data penelitian: panen log harian uji-skripsi.py (hitungan per hari + arsip segmen ber-SHA-256; situs salinan uji-* tidak ikut)
-5 7 * * *    root  /usr/bin/python3 $T/uji-skripsi.py --panen >> /var/log/uji-skripsi-panen.log 2>&1
+# --- data penelitian: ambil dan rekap log harian uji-skripsi.py (hitungan per hari + arsip log ber-SHA-256; situs uji-* tidak ikut)
+5 7 * * *    root  /usr/bin/python3 $T/uji-skripsi.py --ambil-log >> /var/log/uji-skripsi-ambil-log.log 2>&1
 # --- IP admin: IP kantor tetap + IP dinamis lewat DDNS. Atur dengan: lab.sh ip-admin
 #*/10 * * * * root  $T/ip-kantor-sync.sh > /dev/null 2>&1   (dipasang otomatis oleh lab.sh ip-admin di /etc/cron.d/lab-ip-admin; jangan diaktifkan dua kali)
 # --- M5: laporan perilaku IP harian (masukan cf-guard)
 20 5 * * *   root  $T/ip-report.sh 30 > /dev/null 2>&1
 # --- M5 cf-guard: hapus tanda # setelah atur-token.sh cloudflare selesai dan hasil dry-run diperiksa.
-#     Kasus ambigu diajukan ke gerbang persetujuan SOC-IR (lab.sh soc-ir); bot SOC (poll) hanya menjawab perintah.
+#     Kasus ragu-ragu diajukan ke persetujuan admin SOC-IR (lab.sh soc-ir); bot SOC (poll) hanya menjawab perintah.
 #40 */6 * * * root  /usr/bin/python3 $T/cf-guard.py run --apply >> /var/log/cf-guard.cron.log 2>&1
 #* * * * *   root  /usr/bin/python3 $T/cf-guard.py poll >> /var/log/cf-guard.cron.log 2>&1

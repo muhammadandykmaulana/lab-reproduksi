@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# persistence-killer.sh v3 - deteksi dan penanganan persistence backdoor (gsocket, ZESTGOD, NineSec, penyamar kernel thread)
+# persistence-killer.sh v3 - deteksi dan penanganan persistence backdoor (gsocket, ZESTGOD, NineSec, proses yang menyamar jadi kernel thread)
 # Dasar: penanganan insiden Oktober 2026 (proses [watchdogd]/[kcached] milik www-data, crontab "SEED PRNG",
 #        dropper deploy-all.sh + defunct + gs-pkg di folder aset tema, shell ZESTGOD berizin 0444 dengan tanggal dipalsukan).
 #
 # USAGE
 #   persistence-killer.sh [--dry-run]      default: hanya melaporkan, tidak mengubah apa pun
 #   persistence-killer.sh --full           ditambah pemindaian isi PHP (penanda shell), tanggal dipalsukan, izin 0444, flag chattr +i
-#   persistence-killer.sh --kill [--yes]   tindakan: crontab www-data dicadangkan lalu dikosongkan, unit systemd berpenanda
+#   persistence-killer.sh --kill [--yes]   tindakan: crontab www-data dicadangkan lalu dikosongkan, unit systemd mencurigakan
 #                                          dinonaktifkan, proses kandidat dihentikan (SIGSTOP, bukti, SIGKILL), berkas dropper dan
-#                                          shell berpenanda kuat dinetralkan di tempat (salin bukti + sha256, chown root, chmod 000)
+#                                          shell dengan ciri kuat dinetralkan di tempat (salin bukti + sha256, chown root, chmod 000)
 #   persistence-killer.sh --harden         pembatasan www-data: cron.deny, laporan shell/home/izin; saran aturan iptables (tidak diterapkan)
 #   persistence-killer.sh --auto           untuk timer systemd: --kill --yes tanpa tanya, KHUSUS proses milik www-data yang cocok kriteria
 #                                          IOC; hanya proses dan crontab (cepat). Tambah --sweep untuk ikut berkas dropper bernama khas.
 #                                          Pengaman: berhenti dan mengirim alert bila kandidat > 5 proses (anomali), tidak berjalan bila
-#                                          FREEZE bersama aktif (penjaga.sh), proses root tidak pernah disentuh. Senyap bila bersih.
+#                                          FREEZE bersama aktif (freeze.sh), proses root tidak pernah disentuh. Senyap bila bersih.
 #   --include-root   ikutkan proses milik root sebagai kandidat (default: hanya dilaporkan)
 #   --no-cron        lewati pemeriksaan crontab (untuk uji)
 #   --no-notify      jangan kirim ringkasan Telegram pada mode --kill
@@ -21,7 +21,7 @@
 # Aturan: mode default hanya membaca. --kill hanya dijalankan admin (bukan oleh SOC-IR T1 atau asisten AI) dan hanya pada proses
 # yang cocok dengan kriteria IOC (bukan sekadar nama). Tidak ada penghapusan berkas: bukti disalin dulu, berkas dinetralkan.
 # Keluaran memakai penanda [FAIL]/[WARN]/IOC: agar bisa dibungkus notify-run.sh.
-# Utilitas bersama yang dipakai: bukti.py (penyimpanan bukti + SHA-256), penjaga.sh (FREEZE), notify-run.sh (Telegram).
+# Utilitas bersama yang dipakai: simpan-bukti.py (penyimpanan bukti + SHA-256), freeze.sh (FREEZE), notify-run.sh (Telegram).
 
 set -uo pipefail
 VER=3
@@ -30,10 +30,10 @@ WWW=${WWW:-www-data}
 WWWHOME=${WWWHOME:-/var/www}
 TOOLS_DIR=$(dirname "$(readlink -f "$0")")
 BUKTI_DIR=${BUKTI_DIR:-/var/opt/bukti}; export BUKTI_DIR
-BUKTI=${BUKTI_PY:-$TOOLS_DIR/bukti.py}
+BUKTI=${BUKTI_PY:-$TOOLS_DIR/simpan-bukti.py}
 NOTIFY_RUN=${NOTIFY_RUN:-$TOOLS_DIR/notify-run.sh}
 # shellcheck disable=SC1091
-. "${PENJAGA_SH:-$TOOLS_DIR/penjaga.sh}"
+. "${FREEZE_SH:-$TOOLS_DIR/freeze.sh}"
 MODE=dry; FULL=0; YES=0; HARDEN=0; INCROOT=0; NOCRON=0; NOTIFY=1; AUTO=0; SWEEP=0
 MAX_AUTO=5
 
@@ -50,8 +50,8 @@ done
 if [ "$AUTO" -eq 1 ]; then
   MODE=kill; YES=1; INCROOT=0; FULL=0; HARDEN=0
 fi
-if [ "$MODE" = kill ] && penjaga_beku; then
-  echo "FREEZE aktif ($PENJAGA_FREEZE): tidak ada tindakan. $(penjaga_alasan)"; exit 0
+if [ "$MODE" = kill ] && freeze_aktif; then
+  echo "FREEZE aktif ($FREEZE_FILE): tidak ada tindakan. $(freeze_alasan)"; exit 0
 fi
 exec 9>/run/persistence-killer.lock 2>/dev/null && { flock -n 9 || { echo "[!] Proses sebelumnya masih jalan."; exit 0; }; }
 
@@ -131,7 +131,7 @@ scan_procs() {
 }
 sec "1. Proses (kriteria program, bukan hanya nama)"
 scan_procs
-if [ ${#CAND[@]} -eq 0 ]; then ok "Tidak ada proses penyamar / dari folder writable"; fi
+if [ ${#CAND[@]} -eq 0 ]; then ok "Tidak ada proses yang menyamar / berjalan dari folder writable"; fi
 for p in "${CAND[@]}"; do
   ioc "pid=$p user=${USR[$p]} exe=$(clean "${EXE[$p]}" 120) args=[$(clean "${ARGV[$p]}" 60)] alasan: ${WHY[$p]}${PEER[$p]:+koneksi: ${PEER[$p]}}"
 done
@@ -164,9 +164,9 @@ n=0; for f in "${RCF[@]}"; do [ -f "$f" ] && grep -qE "$GS_RE" "$f" 2>/dev/null 
 [ $n -eq 0 ] && ok "rc file bersih dari penanda gsocket"
 for u in /etc/systemd/system/*.service "$WWWHOME"/.config/systemd/user/*.service /root/.config/systemd/user/*.service; do
   [ -f "$u" ] || continue
-  if grep -qE "$GS_RE|^ExecStart=[^#]*(/tmp/|/dev/shm/|/var/www/|/var/tmp/)" "$u" 2>/dev/null; then ioc "unit systemd berpenanda: $u"; UNITS+=("$u"); fi
+  if grep -qE "$GS_RE|^ExecStart=[^#]*(/tmp/|/dev/shm/|/var/www/|/var/tmp/)" "$u" 2>/dev/null; then ioc "unit systemd mencurigakan: $u"; UNITS+=("$u"); fi
 done
-[ ${#UNITS[@]} -eq 0 ] && ok "tidak ada unit systemd berpenanda"
+[ ${#UNITS[@]} -eq 0 ] && ok "tidak ada unit systemd mencurigakan"
 [ -s /etc/ld.so.preload ] && ioc "/etc/ld.so.preload tidak kosong: $(head -c 120 /etc/ld.so.preload)" || ok "ld.so.preload kosong"
 [ -e "$WWWHOME/.ssh/authorized_keys" ] && ioc "authorized_keys ada untuk $WWW" || ok "tidak ada authorized_keys untuk $WWW"
 [ -d "$WWWHOME/.config/htop" ] && ioc "$WWWHOME/.config/htop ada (lokasi pasang gsocket)"
@@ -222,7 +222,7 @@ if [ "$HARDEN" -eq 1 ]; then
 fi
 
 # ----------------------------------------------------------------- 6. tindakan
-# bukti lewat fungsi bersama bukti.py: salinan 0400 bernama SHA-256 + metadata + MANIFEST.tsv di $RUNDIR
+# bukti lewat fungsi bersama simpan-bukti.py: salinan 0400 bernama SHA-256 + metadata + MANIFEST.tsv di $RUNDIR
 bukti_teks() { /usr/bin/python3 -I "$BUKTI" simpan-stdin --kasus "$KASUS" --label "$1" > /dev/null 2>&1; }  # isi dari stdin
 bukti_berkas() { /usr/bin/python3 -I "$BUKTI" simpan --kasus "$KASUS" -- "$@" > /dev/null 2>&1; }
 ev_proc() { # pid: konteks proses + salinan program, sebelum SIGKILL

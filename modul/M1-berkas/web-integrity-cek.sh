@@ -5,7 +5,7 @@
 #   web-integrity-cek.sh --rebuild       buat baseline baru (HANYA saat situs dipastikan bersih)
 #   web-integrity-cek.sh --accept        terima perubahan SAH (update plugin/WP): ringkasan per situs, pemeriksaan IOC,
 #                                        konfirmasi, arsip 6 baseline lama, lalu rebuild
-#   web-integrity-cek.sh --accept --yes  sama, tanpa pertanyaan (dipanggil gerbang T2 SOC-IR setelah disetujui);
+#   web-integrity-cek.sh --accept --yes  sama, tanpa pertanyaan (dipanggil SOC-IR setelah disetujui admin lewat Telegram);
 #                                        keluar kode 3 dan baseline TIDAK diubah bila masih ada temuan penghalang
 # Perubahan v3: integrity-accept.sh digabung ke opsi --accept; pesan Telegram lewat notify-run.sh.
 # Perbaikan bug dari versi server 18 Nov 2026 (logika deteksi TIDAK diubah):
@@ -18,7 +18,7 @@
 #  - Token Telegram dibaca dari /etc/web-integrity.env (chmod 600), tidak di dalam skrip
 #  - cache/ dan vendor/ TIDAK lagi dikecualikan untuk file kode (php, phtml, phar, inc, js, so, htaccess, .user.ini)
 #  - Alert langsung bila ada PHP baru di uploads/cache/images, folder plugin baru, atau mu-plugin baru
-#  - Cek akun admin siluman di semua database WordPress (email .internal, login wpsvc*, admin baru 24 jam)
+#  - Cek akun admin palsu (susupan) di semua database WordPress (email .internal, login wpsvc*, admin baru 24 jam)
 #  - Deteksi IOC token/webshell (hash_equals+$_GET, marker <<S>>, shell_exec dkk) di file yang berubah
 #  - Baseline tidak dibuat otomatis diam-diam: pakai --rebuild (setelah situs dipastikan bersih)
 #  - Pesan Telegram plain text (tanpa Markdown) agar tidak gagal kirim karena karakter khusus
@@ -44,22 +44,28 @@ trap 'rm -f "$CURR" "$DIFF" "${CURR}".*' EXIT
 # ---- --accept: terima perubahan sah ke baseline (menggantikan integrity-accept.sh) ----
 if [ "${1:-}" = "--accept" ]; then
   YES=0; [ "${2:-}" = "--yes" ] && YES=1
-  BLOCK_RE='^(\[FAIL\] )?(IOC:|PHP DI FOLDER DATA:|AKUN BARU/SILUMAN|PLUGIN/MU-PLUGIN BARU:|EKSTENSI GANDA:|PHP DI DALAM GAMBAR:|OJS (ADMIN|UPLOADER|EKSTENSI)|DB OJS|CRONTAB www-data|authorized_keys)'
+  BLOCK_RE='^(\[FAIL\] )?(IOC:|PHP DI FOLDER DATA:|AKUN BARU/(SILUMAN|PALSU)|PLUGIN/MU-PLUGIN BARU:|EKSTENSI GANDA:|PHP DI DALAM GAMBAR:|OJS (ADMIN|UPLOADER|EKSTENSI)|DB OJS|CRONTAB www-data|authorized_keys)'
   [ "$(id -u)" -eq 0 ] || { echo "Jalankan dengan sudo."; exit 2; }
   [ -f "$HASHDB" ] || { echo "Baseline belum ada, jalankan: $0 --rebuild"; exit 1; }
   echo "== Pemeriksaan perubahan terhadap baseline =="
-  OUT=$(mktemp "${TMPDIR:-/run}/wi-acc.XXXXXX"); NOTIFY_RUN_WRAPPED=1 "$0" > "$OUT" 2>&1
-  head -60 "$OUT"
-  echo; echo "== Ringkasan perubahan per situs =="
-  grep -E '^[<>] [0-9a-f]{64}  ' "$OUT" | sed -E "s#^[<>] [0-9a-f]{64}  ${WEBROOT}/([^/]+)/.*#\1#" | sort | uniq -c | sort -rn
+  OUT=$(mktemp "${TMPDIR:-/run}/wi-acc.XXXXXX"); WI_DIFF_MAX=999999999 NOTIFY_RUN_WRAPPED=1 "$0" > "$OUT" 2>&1
+  grep -vE '^[<>] [0-9a-f]{64}  ' "$OUT" | head -40
+  echo "(daftar lengkap berkas: $HASHDB_DIR/accept-terakhir.txt)"
+  grep -E '^[<>] [0-9a-f]{64}  ' "$OUT" > "$HASHDB_DIR/accept-terakhir.txt"; chmod 600 "$HASHDB_DIR/accept-terakhir.txt"
+  echo; echo "== Ringkasan perubahan per situs =="; printf '  %-34s %8s %8s %8s\n' situs berubah baru hilang
+  grep -E '^[<>] [0-9a-f]{64}  ' "$OUT" | awk -v w="${WEBROOT}/" '{ t=$1; f=substr($0, index($0,$3)); sub("^" w, "", f); s=f; sub("/.*", "", s);
+      k=s SUBSEP f; if (t=="<") a[k]=1; else b[k]=1; S[s]=1 }
+    END { for (k in a) { split(k, x, SUBSEP); if (k in b) ub[x[1]]++; else hl[x[1]]++ }
+          for (k in b) { split(k, x, SUBSEP); if (!(k in a)) br[x[1]]++ }
+          for (s in S) printf "  %-34s %8d %8d %8d\n", s, ub[s], br[s], hl[s] }' | sort -k2 -rn
   BLOCKERS=$(grep -cE "$BLOCK_RE" "$OUT" || true); rm -f "$OUT"
   echo
   if [ "$YES" -eq 1 ]; then
     [ "$BLOCKERS" -gt 0 ] && { echo "DITOLAK: $BLOCKERS baris IOC/PHP data/akun/plugin baru masih ada. Baseline TIDAK diubah."; exit 3; }
     echo "Mode --yes: tidak ada temuan penghalang, baseline diterima."
   else
-    echo "JANGAN terima bila ada IOC, PHP DI FOLDER DATA, AKUN BARU/SILUMAN, atau PLUGIN BARU yang tidak Anda pasang sendiri."
-    echo "Selidiki dulu dengan collect3_evidence.sh --auto."
+    echo "JANGAN terima bila ada IOC, PHP DI FOLDER DATA, AKUN BARU/PALSU, atau PLUGIN BARU yang tidak Anda pasang sendiri."
+    echo "Selidiki dulu dengan kumpulkan-bukti.sh --auto."
     [ "$BLOCKERS" -gt 0 ] && echo "!!! $BLOCKERS baris penghalang terdeteksi pada pemeriksaan barusan."
     read -rp "Terima perubahan di atas ke baseline? [y/N] " a
     [ "$a" = "y" ] || { echo "Dibatalkan, baseline tidak diubah."; exit 0; }
@@ -147,12 +153,12 @@ else
 fi
 rm -f "$CURR.pl" "$CURR.new"
 
-# ---- C) Akun admin siluman (WordPress) ----
+# ---- C) Akun admin palsu/susupan (WordPress) ----
 for db in $(mariadb -N -e "SHOW DATABASES" 2>/dev/null | grep -vE '^(information_schema|performance_schema|mysql|sys)$'); do
   for t in $(mariadb -N -e "SELECT table_name FROM information_schema.columns WHERE table_schema='$db' AND column_name='user_login' AND table_name LIKE '%users'" 2>/dev/null); do
     r=$(mariadb -N -e "SELECT CONCAT(ID,' ',user_login,' ',user_email,' ',user_registered) FROM \`$db\`.\`$t\`
         WHERE user_email LIKE '%.internal' OR user_login REGEXP '^(wpsvc|svc_)' OR user_registered >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL 24 HOUR)" 2>/dev/null)
-    [ -n "$r" ] && add "AKUN BARU/SILUMAN di $db.$t: $r"
+    [ -n "$r" ] && add "AKUN BARU/PALSU di $db.$t: $r"
   done
 done
 
@@ -245,11 +251,11 @@ $ALERTS
   echo "Web Integrity ALERT $(hostname) $(date '+%F %T')"
   awk 'NF { print "[FAIL] " $0 }' <<< "$ALERTS"
   echo "(total file berubah: ${NCHANGED})"
-  awk '/^[<>]/ { if (++c <= 40) print } END { if (c > 40) printf "(... %d baris lagi tidak ditampilkan)\n", c - 40 }' "$DIFF"
+  awk -v m="${WI_DIFF_MAX:-40}" '/^[<>]/ { if (++c <= m) print } END { if (c > m) printf "(... %d baris lagi tidak ditampilkan)\n", c - m }' "$DIFF"
 elif [ -s "$DIFF" ]; then
   # perubahan tanpa IOC: ringkas saja (update plugin/tema yang sah), jangan spam
   echo "[i] ${NCHANGED} file berubah tanpa IOC (kemungkinan update sah)."
-  awk '/^[<>]/ { if (++c <= 40) print } END { if (c > 40) printf "(... %d baris lagi tidak ditampilkan)\n", c - 40 }' "$DIFF"
+  awk -v m="${WI_DIFF_MAX:-40}" '/^[<>]/ { if (++c <= m) print } END { if (c > m) printf "(... %d baris lagi tidak ditampilkan)\n", c - m }' "$DIFF"
   echo "[i] Bila perubahan ini memang update sah, terima ke baseline: $0 --accept"
 else
   echo "[OK] Tidak ada perubahan."

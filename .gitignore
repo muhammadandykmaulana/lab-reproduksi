@@ -1,5 +1,5 @@
 # ==== Lab reproduksi: berkas yang TIDAK BOLEH masuk repositori ====
-# Jalankan `bash cek-rahasia.sh` sebelum setiap `git push`.
+# Jalankan `bash cek-sebelum-share.sh` sebelum setiap `git push`.
 
 # --- rahasia (token, kata sandi, kunci) ---
 *.env

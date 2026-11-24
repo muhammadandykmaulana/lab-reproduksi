@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # lab.sh - menu lab reproduksi. Tanpa argumen = menu interaktif; atau langsung: lab.sh <perintah>
-#   status | sinkron [--pasang] [--hanya a,b] | ip-admin | ojs-db | demo | demo-bersihkan | baseline | cek | token | jadwal-pasang | jadwal-lepas | soc-ir | uji | copot
+#   status | sinkron [--pasang] [--hanya a,b] | ip-admin | ojs-db | demo | demo-bersihkan | baseline | cek | token | pasang-cron | lepas-cron | soc-ir | uji | uninstall
 set -uo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$DIR/lib/umum.sh"
 perlu_root
 
-daftar_skrip() { ls "$DIR"/modul/*/*.sh "$DIR"/modul/*/*.py "$DIR"/lapisan/*.sh "$DIR"/lingkungan/*.sh "$DIR"/lingkungan/*.py "$DIR"/uji/*.py 2>/dev/null; }
+daftar_skrip() { ls "$DIR"/modul/*/*.sh "$DIR"/modul/*/*.py "$DIR"/pencegahan/*.sh "$DIR"/pendukung/*.sh "$DIR"/pendukung/*.py "$DIR"/uji/*.py 2>/dev/null; }
 
 status() {
   judul "Status lab ($(hostname))"
   printf '  %-28s %s\n' "Sistem" "$(. /etc/os-release; echo "$PRETTY_NAME")"
   printf '  %-28s %s\n' "Folder lab" "$LAB_TUJUAN"
   printf '  %-28s %s\n' "Skrip terpasang di $TOOLS" "$(daftar_skrip | while read -r f; do [ -f "$TOOLS/$(basename "$f")" ] && echo x; done | wc -l) dari $(daftar_skrip | wc -l)"
-  printf '  %-28s %s\n' "FREEZE bersama" "$(bash "$TOOLS/penjaga.sh" status 2>/dev/null || true)"
+  printf '  %-28s %s\n' "FREEZE (semua modul)" "$(bash "$TOOLS/freeze.sh" status 2>/dev/null || true)"
   for k in TELEGRAM CLOUDFLARE PERSETUJUAN JADWAL; do printf '  %-28s %s\n' "$k" "$(status_get $k | grep . || echo belum)"; done
   printf '  %-28s %s\n' "Baseline berkas" "$([ -s /var/opt/filehash-web-all/baseline.sha256 ] && echo "ada ($(wc -l < /var/opt/filehash-web-all/baseline.sha256) berkas)" || echo belum)"
   printf '  %-28s %s\n' "Baseline database" "$(ls /var/opt/db-integrity/*.admins >/dev/null 2>&1 && echo ada || echo belum)"
@@ -39,7 +39,7 @@ cek() {
 }
 
 jadwal_pasang() {
-  judul "Pasang jadwal otomatis"
+  judul "Pasang jadwal otomatis (cron dan timer)"
   install -m 644 "$DIR/jadwal/lab-reproduksi.cron" /etc/cron.d/lab-reproduksi
   [ -n "$(get_kv "$ENV_WI" OJS_DB)" ] || sed -i 's|^\(.*notif-ojs.py.*\)$|# \1   (OJS_DB kosong)|' /etc/cron.d/lab-reproduksi
   for u in "$DIR"/jadwal/*.service "$DIR"/jadwal/*.timer; do install -m 644 "$u" /etc/systemd/system/; done
@@ -51,7 +51,7 @@ jadwal_pasang() {
 }
 
 jadwal_lepas() {
-  judul "Lepas jadwal otomatis"
+  judul "Lepas jadwal otomatis (cron dan timer)"
   rm -f /etc/cron.d/lab-reproduksi /etc/cron.d/lab-ip-admin
   systemctl disable --now lab-web-integrity.timer lab-cek-disk.service >/dev/null 2>&1
   bash "$TOOLS/pk-systemd-setup.sh" off >/dev/null 2>&1
@@ -72,7 +72,12 @@ sinkron() {  # perbarui folder lab di server dari folder ini (hasil unzip), lalu
   fi
   if [ "$(readlink -f "$DIR")" != "$(readlink -f "$LAB_TUJUAN")" ]; then
     mkdir -p "$LAB_TUJUAN"
-    rsync -a --exclude .git --exclude '__pycache__' "$DIR"/ "$LAB_TUJUAN"/ && sukses "folder lab diperbarui: $LAB_TUJUAN (tanpa menghapus berkas lain di sana)"
+    # --delete: folder lab di server dibuat sama persis dengan paket baru, supaya folder/skrip bernama lama tidak ikut
+    # terbaca. Berkas yang terhapus tidak hilang: dipindah ke .sebelum-sinkron/lab-<waktu>. Folder .git tidak disentuh.
+    local bak_lab="$TOOLS/.sebelum-sinkron/lab-$(date +%Y%m%d-%H%M%S)"
+    rsync -a --delete --backup --backup-dir="$bak_lab" --exclude .git --exclude '__pycache__' "$DIR"/ "$LAB_TUJUAN"/ \
+      && sukses "folder lab diperbarui: $LAB_TUJUAN (sama persis dengan paket baru)"
+    [ -d "$bak_lab" ] && { chmod 700 "$TOOLS/.sebelum-sinkron" "$bak_lab"; info "berkas lama di folder lab dipindah ke $bak_lab"; }
     chown -R root:root "$LAB_TUJUAN"; chmod -R go-w "$LAB_TUJUAN"; chmod 750 "$LAB_TUJUAN"
   else info "dijalankan dari folder lab di server; langsung membandingkan dengan $TOOLS"; fi
   local f n t sama=0 beda=() baru=() lewat=() TS bak
@@ -94,13 +99,14 @@ sinkron() {  # perbarui folder lab di server dari folder ini (hasil unzip), lalu
     echo; info "belum ada yang dipasang. Lihat beda satu skrip: diff $TOOLS/NAMA $LAB_TUJUAN/<folder>/NAMA"
     info "pasang: sudo bash $0 sinkron --pasang   (atau --pasang --hanya nama1,nama2)"; return 0
   fi
-  [ $((${#beda[@]}+${#baru[@]})) -gt 0 ] || { sukses "tidak ada yang perlu dipasang"; return 0; }
+  [ $((${#beda[@]}+${#baru[@]})) -gt 0 ] || { singkirkan_nama_lama "$TOOLS/.sebelum-sinkron/$(date +%Y%m%d-%H%M%S)"; sukses "tidak ada yang perlu dipasang"; return 0; }
   TS=$(date +%Y%m%d-%H%M%S); bak="$TOOLS/.sebelum-sinkron/$TS"; mkdir -p "$bak"; chmod 700 "$TOOLS/.sebelum-sinkron" "$bak"
   for n in "${beda[@]}" "${baru[@]}"; do
     f=$(daftar_skrip_di "$LAB_TUJUAN" | awk -F/ -v n="$n" '$NF==n' | head -1)
     [ -f "$TOOLS/$n" ] && cp -a "$TOOLS/$n" "$bak/$n"
     install -m 750 -o root -g root "$f" "$TOOLS/$n" && echo "  [ OK ] $n"
   done
+  singkirkan_nama_lama "$bak"
   sukses "versi lama disimpan di $bak"
   info "kembalikan satu skrip: sudo install -m 750 $bak/NAMA $TOOLS/NAMA"
   if [ -f /etc/cron.d/lab-reproduksi ] && ! cmp -s "$LAB_TUJUAN/jadwal/lab-reproduksi.cron" /etc/cron.d/lab-reproduksi; then
@@ -108,7 +114,7 @@ sinkron() {  # perbarui folder lab di server dari folder ini (hasil unzip), lalu
   fi
 }
 
-daftar_skrip_di() { ls "$1"/modul/*/*.sh "$1"/modul/*/*.py "$1"/lapisan/*.sh "$1"/lingkungan/*.sh "$1"/lingkungan/*.py "$1"/uji/*.py 2>/dev/null; }
+daftar_skrip_di() { ls "$1"/modul/*/*.sh "$1"/modul/*/*.py "$1"/pencegahan/*.sh "$1"/pendukung/*.sh "$1"/pendukung/*.py "$1"/uji/*.py 2>/dev/null; }
 
 ip_admin() {  # IP yang dikecualikan dari laporan/blokir: IP tetap + IP dinamis (dibaca dari nama DDNS tiap 10 menit)
   judul "IP admin (dikecualikan dari laporan IP mencurigakan dan dari blokir cf-guard)"
@@ -154,14 +160,14 @@ ojs_db() {  # nama database OJS dibaca dari config.inc.php ([database] name = ..
 
 soc_ir() {
   judul "SOC-IR (Bodyguard HITL: tingkat aksi T0-T3 dengan persetujuan manusia)"
-  local bg="$DIR/modul/M5-penjaga-keputusan/soc-ir/bodyguard-hitl"
+  local bg="$DIR/modul/M5-blokir-attacker/soc-ir/bodyguard-hitl"
   bash "$bg/tools/install.sh" --plan | tail -25
   ya_tidak "Terapkan rencana di atas (--apply)? Timer TIDAK dinyalakan otomatis" n && bash "$bg/tools/install.sh" --apply
   echo "Langkah lanjut: isi /etc/bodyguard/bodyguard.conf (mode = dry-run), lalu: systemctl enable --now bodyguard-scan.timer"
 }
 
-copot() {
-  judul "Copot lab"
+uninstall_lab() {
+  judul "Uninstall lab"
   ya_tidak "Lepas jadwal dan hapus skrip lab dari $TOOLS? (konfigurasi /etc, baseline, bukti, dan backup TIDAK dihapus)" n || return 0
   jadwal_lepas
   daftar_skrip | while read -r f; do t="$TOOLS/$(basename "$f")"; cmp -s "$f" "$t" && rm -f "$t"; done
@@ -177,20 +183,20 @@ ${B}Lab Reproduksi - menu${N}
   2) Demo aman (simulasi)          7) Lepas jadwal otomatis
   3) Buat baseline                 8) Pasang SOC-IR (Bodyguard)
   4) Jalankan pemeriksaan          9) Alat uji skripsi (uji-skripsi.py)
-  5) Atur token Telegram/CF       10) Copot lab
+  5) Atur token Telegram/CF       10) Uninstall lab
  11) IP admin (tetap/DDNS)        12) Database OJS
  13) Sinkron dari folder ini (rencana)
   0) Keluar
 EOF
     read -r -p "Pilih: " p || exit 0
     case "$p" in 1) status;; 2) bash "$DIR/demo/demo-lab.sh";; 3) baseline;; 4) cek;; 5) bash "$DIR/atur-token.sh";;
-      6) jadwal_pasang;; 7) jadwal_lepas;; 8) soc_ir;; 9) python3 "$TOOLS/uji-skripsi.py";; 10) copot;; 11) ip_admin;; 12) ojs_db;; 13) sinkron;; 0) exit 0;; *) echo "?";; esac
+      6) jadwal_pasang;; 7) jadwal_lepas;; 8) soc_ir;; 9) python3 "$TOOLS/uji-skripsi.py";; 10) uninstall_lab;; 11) ip_admin;; 12) ojs_db;; 13) sinkron;; 0) exit 0;; *) echo "?";; esac
   done
 }
 
 case "${1:-menu}" in
   status) status;; sinkron) shift; sinkron "$@";; ip-admin) shift; ip_admin "$@";; ojs-db) ojs_db "${2:-}";; demo) bash "$DIR/demo/demo-lab.sh";; demo-bersihkan) bash "$DIR/demo/demo-lab.sh" --bersihkan;;
-  baseline) baseline;; cek) cek;; token) bash "$DIR/atur-token.sh";; jadwal-pasang) jadwal_pasang;; jadwal-lepas) jadwal_lepas;;
-  soc-ir) soc_ir;; uji) python3 "$TOOLS/uji-skripsi.py";; copot) copot;; menu) menu;;
+  baseline) baseline;; cek) cek;; token) bash "$DIR/atur-token.sh";; pasang-cron) jadwal_pasang;; lepas-cron) jadwal_lepas;;
+  soc-ir) soc_ir;; uji) python3 "$TOOLS/uji-skripsi.py";; uninstall) uninstall_lab;; menu) menu;;
   *) sed -n '2,3p' "$0"; exit 2;;
 esac
